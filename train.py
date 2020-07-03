@@ -105,6 +105,8 @@ def main():
     print('\n***Nb features in models***')
     print('n_feats_emb:', n_feats_emb)
     print('n_feats:', n_feats)
+    
+    """
     # Feat embedding network
     feat_emb_model = model.Feat_emb_net(
             n_feats=n_feats_emb,
@@ -124,14 +126,28 @@ def main():
     discrim_model.to(device)
     discrim_model_out = discrim_model(train_set.xs)
     print(discrim_model_out.size())
+    """
+    
+    comb_model = model.CombinedModel(
+                 n_feats=n_feats_emb,
+                 n_hidden_u=emb_n_hidden_u,
+                 n_hidden1_u=discrim_n_hidden1_u, 
+                 n_hidden2_u=discrim_n_hidden2_u,
+                 n_targets=n_targets,
+                 input_dropout=0.)
+    comb_model.to(device)
 
     # Loss
     criterion = nn.CrossEntropyLoss()
     # Optimizer
     lr = 0.00003
+    """
     params = list(discrim_model.parameters()) + \
              list(feat_emb_model.parameters())
     optimizer = torch.optim.Adam(params, lr=lr)
+    """
+    
+    optimizer = torch.optim.Adam(comb_model.parameters(), lr=lr)
 
     # Training loop hyper param
     n_epochs = 500
@@ -153,8 +169,11 @@ def main():
         start_time = time.time()
 
         # ---Training---
+        """
         feat_emb_model.train()
         discrim_model.train()
+        """
+        comb_model.train()
 
         # Monitoring
         train_minibatch_mean_losses = []
@@ -162,12 +181,18 @@ def main():
 
         for x_batch, y_batch, _ in train_generator:
             optimizer.zero_grad()
+            
+            """
             # Forward pass in aux net
             feat_emb_model_out = feat_emb_model(emb)
             # Forward pass in discrim net
             fatLayer_weights = torch.transpose(feat_emb_model_out,1,0)
             discrim_model.hidden_1.weight.data = fatLayer_weights
             discrim_model_out = discrim_model(x_batch)
+            """
+            
+            discrim_model_out = comb_model(emb, x_batch)
+            
             # Get prediction
             with torch.no_grad():
                 yhat = F.softmax(discrim_model_out, dim=1)
@@ -177,10 +202,13 @@ def main():
             loss = criterion(discrim_model_out, y_batch)
             # Compute gradients in discrim net
             loss.backward()
+            
+            """
             # Copy weights of discrim net fatLayer to the output of aux net
             fatLayer_weights.grad = discrim_model.hidden_1.weight.grad
             # Compute gradients in feat. emb net
             torch.autograd.backward(fatLayer_weights, fatLayer_weights.grad)
+            """
 
             # Optim
             optimizer.step()
@@ -199,7 +227,10 @@ def main():
         print('train loss:', epoch_loss, 'train acc:', epoch_acc)
 
         # ---Validation---
+        """
         discrim_model.eval()
+        """
+        comb_model.eval()
 
         # Monitoring
         valid_minibatch_mean_losses = []
@@ -207,7 +238,10 @@ def main():
 
         for x_batch, y_batch, _ in valid_generator:
             # Forward pass
+            discrim_model_out = comb_model(emb, x_batch)
+            """
             discrim_model_out = discrim_model(x_batch)
+            """
 
             # Predictions
             with torch.no_grad():
