@@ -1,0 +1,6 @@
+.ipynb_checkpoints/
+run.sh
+scrapwork.ipynb
+__pycache__/
+EXPERIMENT_01/final_out.npz
+SCRIPTS/__pycache__/

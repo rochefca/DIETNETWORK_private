@@ -97,7 +97,7 @@ class Discrim_net2(nn.Module):
         # weight = comes from feat embedding net
         # now ^^^ is passed with forward
         x = self.input_dropout(x)
-        z1 = self.hidden_1 = F.linear(x, fatLayer_weights, bias=None)
+        z1 = F.linear(x, fatLayer_weights, bias=None)
         #z1 = self.hidden_1(x)
         a1 = torch.relu(z1)
         a1 = self.bn1(a1)
