@@ -2,6 +2,8 @@ import argparse
 import os
 import time
 
+import h5py
+
 import numpy as np
 
 import torch
@@ -16,6 +18,7 @@ import helpers.log_utils as lu
 
 
 def main():
+    print('I am in train')
     args = parse_args()
 
     # Directory to save experiment info
@@ -41,6 +44,7 @@ def main():
     print('Seed:', str(seed))
 
     # Get fold data (indexes and samples are np arrays, x,y are tensors)
+    """
     data = du.load_data(os.path.join(args.exp_path,args.dataset))
     folds_indexes = du.load_folds_indexes(
             os.path.join(args.exp_path,args.folds_indexes))
@@ -52,8 +56,10 @@ def main():
                                         data,
                                         split_ratio=args.train_valid_ratio,
                                         seed=args.seed)
+    """
 
     # Put data on GPU
+    """
     x_train, x_valid, x_test = x_train.to(device), x_valid.to(device), \
             x_test.to(device)
     x_train, x_valid, x_test = x_train.float(), x_valid.float(), \
@@ -61,32 +67,55 @@ def main():
 
     y_train, y_valid, y_test = y_train.to(device), y_valid.to(device), \
             y_test.to(device)
+    """
+
 
     # Compute mean and sd of training set for normalization
+    """
     mus, sigmas = du.compute_norm_values(x_train)
+    """
+
+    # Load mean and sd of training set for normalization
+    preprocess_params = np.load(args.preprocess_params)
+    mus = preprocess_params['per_feature_mean']
+    sigmas = preprocess_params['per_feature_sd']
 
     # Replace missing values
+    """
     du.replace_missing_values(x_train, mus)
     du.replace_missing_values(x_valid, mus)
     du.replace_missing_values(x_test, mus)
+    """
 
     # Normalize
+    """
     x_train_normed = du.normalize(x_train, mus, sigmas)
     x_valid_normed = du.normalize(x_valid, mus, sigmas)
     x_test_normed = du.normalize(x_test, mus, sigmas)
+    """
 
     # Make fold final dataset
+    """
     train_set = du.FoldDataset(x_train_normed, y_train, samples_train)
     valid_set = du.FoldDataset(x_valid_normed, y_valid, samples_valid)
     test_set = du.FoldDataset(x_test_normed, y_test, samples_test)
+    """
+    print('Loading dataset')
+    genotypes_file = h5py.File(args.per_chr_data, 'r')
+    du.FoldDataset.genotypes = np.array(genotypes_file.get('genotypes_mat'))
+    train_set = du.FoldDataset(args.metadata, args.per_chr_data, 'train')
+    valid_set = du.FoldDataset(args.metadata, args.per_chr_data, 'valid')
+    test_set = du.FoldDataset(args.metadata, args.per_chr_data, 'test')
 
     # Load embedding
+    print('Loading embedding')
     emb = du.load_embedding(os.path.join(args.exp_path,args.embedding),
                             args.which_fold)
     emb = emb.to(device)
     emb = emb.float()
 
     # Normalize embedding
+    print('Normalizing embedding')
     emb_norm = (emb ** 2).sum(0) ** 0.5
     emb = emb/emb_norm
 
@@ -99,12 +128,9 @@ def main():
     discrim_n_hidden1_u = 100
     discrim_n_hidden2_u = 100
     # Output layer
-    n_targets = max(torch.max(train_set.ys).item(),
-                    torch.max(valid_set.ys).item(),
-                    torch.max(test_set.ys).item()) + 1 #0-based encoding
-
-    #import pdb
-    #pdb.set_trace()
+    n_targets = max(np.max(train_set.ys),
+                    np.max(valid_set.ys),
+                    np.max(test_set.ys)) + 1 #0-based encoding
 
     print('\n***Nb features in models***')
     print('n_feats_emb:', n_feats_emb)
@@ -134,6 +160,7 @@ def main():
     test_batch_size = 16 # smaller since doing attributions on this!
 
     # Minibatch generators
+    print('Data loader')
     train_generator = DataLoader(train_set, batch_size=batch_size)
     valid_generator = DataLoader(valid_set,
                                  batch_size=batch_size,
@@ -155,8 +182,9 @@ def main():
     discrim_model = mlu.create_disc_model(comb_model, emb, device)
 
     # Monitoring: validation baseline
+    print('Computing baseline')
     min_loss, best_acc = mlu.eval_step(valid_generator, len(valid_set),
-                                       discrim_model, criterion)
+                                       discrim_model, criterion, mus, sigmas)
     print('baseline loss:',min_loss, 'baseline acc:', best_acc)
 
     # Monitoring: Nb epoch without improvement after which to stop training
@@ -177,9 +205,20 @@ def main():
         train_minibatch_n_right = [] #nb of good classifications
 
         for x_batch, y_batch, _ in train_generator:
+            print('Putting data on GPU')
+            # Put data on GPU
+            x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+            # Replace missing values
+            print('Replacing mssing values')
+            du.replace_missing_values(x_batch, mus)
+            # Normalize
+            print('Normalizing values')
+            x_batch = du.normalize(x_batch, mus, sigmas)
+
             optimizer.zero_grad()
 
             # Forward pass
+            print('Doing the foward pass')
             discrim_model_out = comb_model(emb, x_batch)
 
             # Get prediction (softmax)
@@ -209,7 +248,7 @@ def main():
         # ---Validation---
         comb_model = comb_model.eval()
         epoch_loss, epoch_acc = mlu.eval_step(valid_generator, len(valid_set),
-                                              discrim_model, criterion)
+                                              discrim_model, criterion, mus, sigmas)
 
         valid_losses.append(epoch_loss)
         valid_acc.append(epoch_acc)
@@ -255,15 +294,15 @@ def main():
     lu.save_results(out_dir,
                     test_set.samples,
                     test_set.ys,
-                    data['label_names'],
+                    test_set.label_names,
                     score, pred)
 
-    # Save additional data
+    # Save additional data : here i removed snps names because of ukb data
     lu.save_additional_data(out_dir,
                             train_set.samples, valid_set.samples,
                             test_set.samples, test_set.ys,
                             pred, score,
-                            data['label_names'], data['snp_names'],
+                            test_set.label_names,
                             mus, sigmas)
 
 
@@ -288,7 +327,7 @@ def parse_args():
                   'This direcotry must be in the directory specified with '
                   'exp-path. ')
             )
-
+    """
     parser.add_argument(
             '--dataset',
             type=str,
@@ -297,7 +336,27 @@ def parse_args():
                   'The file must be in direcotry specified with exp-path '
                   'Default: %(default)s')
             )
+    """
+    # Data for ukbb
+    parser.add_argument(
+            '--per-chr-data',
+            type=str,
+            #default='/home/cam27/scratch/UKBB/WHITE_BRITISH/FILTER_MAF_FIRST/LESS_INDS/DIETNET_PREP/UKBB_WhiteBritish_730KSNPs_chr%i_randomsubset.hdf5'
+            default='/home/cam27/scratch/UKBB/WHITE_BRITISH/FILTER_MAF_FIRST/LESS_INDS/DIETNET_PREP/genotypes_mat_allchr.hdf5'
+            )
 
+    parser.add_argument(
+            '--metadata',
+            type=str,
+            default='/home/cam27/scratch/UKBB/WHITE_BRITISH/FILTER_MAF_FIRST/LESS_INDS/DIETNET_PREP/UKBB_WhiteBritish_730KSNPs_datasetinfo_randomsubset.hdf5'
+            )
+
+    parser.add_argument(
+            '--preprocess-params',
+            type=str,
+            default='/home/cam27/scratch/UKBB/WHITE_BRITISH/FILTER_MAF_FIRST/LESS_INDS/DIETNET_PREP/norm_params.npz'
+            )
+    """
     parser.add_argument(
             '--folds-indexes',
             type=str,
@@ -306,7 +365,7 @@ def parse_args():
                   'The file must be in directory specified with exp-path. '
                   'Default: %(default)s')
             )
-
+    """
     parser.add_argument(
         '--embedding',
         type=str,
@@ -322,7 +381,7 @@ def parse_args():
             default=0,
             help='Which fold to train (1st fold is 0). Default: %(default)i'
             )
-
+    """
     parser.add_argument(
             '--train-valid-ratio',
             type=float,
@@ -331,7 +390,7 @@ def parse_args():
                   'For example, 0.75 will use 75%% of data for training '
                   'and 25%% of data for validation. Default: %(default).2f')
             )
-
+    """
     parser.add_argument(
             '--seed',
             type=int,

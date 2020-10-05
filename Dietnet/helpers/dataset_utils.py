@@ -1,26 +1,60 @@
 import math
 
+import h5py
+
 import numpy as np
 
 import torch
 
 
 class FoldDataset(torch.utils.data.Dataset):
-    def __init__(self, xs, ys, samples):
-        self.xs = xs #tensor on gpu
-        self.ys = ys #tensor on gpu
-        self.samples = samples #np array
+    def __init__(self, metadata, chr_hdf5files, which_set):
+        hf = h5py.File(metadata, 'r')
+        #allgenotypes = np.array(hf_chr.get('genotypes_mat'))
+        # Train set
+        if which_set == 'train':
+            print('Training set')
+            self.idx = np.array(hf.get('train_idx'))
+            self.samples = np.array(hf.get('samples'))[self.idx]
+            self.ys = np.array(hf.get('labels'))[self.idx]
+            #self.xs = allgenotypes[self.idx]
+        # Valid set
+        elif which_set == 'valid':
+            print('Validation set')
+            self.idx = np.array(hf.get('valid_idx'))
+            self.samples = np.array(hf.get('samples'))[self.idx]
+            self.ys = np.array(hf.get('labels'))[self.idx]
+            #self.xs = allgenotypes[self.idx]
+        # Test set
+        else:
+            print('Test set')
+            self.idx = np.array(hf.get('test_idx'))
+            self.samples = np.array(hf.get('samples'))[self.idx]
+            self.ys = np.array(hf.get('labels'))[self.idx]
+            #self.xs = allgenotypes[self.idx]
+
+        self.label_names = np.array(hf.get('label_names'))
+        #self.chr_hdf5file = chr_hdf5files
+        hf.close()
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, index):
         # Index can be a number or a list of numbers
-        x = self.xs[index]
-        y = self.ys[index]
-        sample = self.samples[index]
+        print(index)
+        """
+        all_genotypes = []
+        for i in range(1,23):
+            print('chromsome', i, 'genotypes loading')
+            hf = h5py.File(self.chr_hdf5file %i, 'r')
+            g = np.array(hf.get('chr%i_genotypes' %i))[self.idx][index]
+            all_genotypes.append(g)
+        final_genotypes = np.hstack(all_genotypes)
 
-        return x, y, sample
+        return final_genotypes, self.ys[index], self.samples[index]
+        """
+        return self.genotypes[self.idx][index], self.ys[index], self.samples[index]
 
 
 def shuffle(indices, seed=None):
