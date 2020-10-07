@@ -15,7 +15,7 @@ def eval_step(valid_generator, set_size, discrim_model, criterion, mus, sigmas):
     for x_batch, y_batch, _ in valid_generator:
         # Put data on GPU
         print('Eval step, loading data on GPU')
-        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+        x_batch, y_batch = np.array(x_batch).to(device), np.array(y_batch).to(device)
         # Replace missing values
         print('Eval step, replacing missing values')
         du.replace_missing_values(x_batch, mus)

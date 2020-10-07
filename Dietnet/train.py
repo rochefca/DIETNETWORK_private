@@ -101,11 +101,9 @@ def main():
     test_set = du.FoldDataset(x_test_normed, y_test, samples_test)
     """
     print('Loading dataset')
-    genotypes_file = h5py.File(args.per_chr_data, 'r')
-    du.FoldDataset.genotypes = np.array(genotypes_file.get('genotypes_mat'))
-    train_set = du.FoldDataset(args.metadata, args.per_chr_data, 'train')
-    valid_set = du.FoldDataset(args.metadata, args.per_chr_data, 'valid')
-    test_set = du.FoldDataset(args.metadata, args.per_chr_data, 'test')
+    train_set = du.FoldDataset(args.train_dataset)
+    valid_set = du.FoldDataset(args.valid_dataset)
+    test_set = du.FoldDataset(args.test_dataset)
 
     # Load embedding
     print('Loading embedding')
@@ -128,10 +126,12 @@ def main():
     discrim_n_hidden1_u = 100
     discrim_n_hidden2_u = 100
     # Output layer
+    """
     n_targets = max(np.max(train_set.ys),
                     np.max(valid_set.ys),
                     np.max(test_set.ys)) + 1 #0-based encoding
-
+    """
+    n_targets = 10 # this should not be harcoded
     print('\n***Nb features in models***')
     print('n_feats_emb:', n_feats_emb)
     print('n_feats:', n_feats)
@@ -161,13 +161,15 @@ def main():
 
     # Minibatch generators
     print('Data loader')
-    train_generator = DataLoader(train_set, batch_size=batch_size)
+    train_generator = DataLoader(train_set, batch_size=batch_size, num_workers=0)
     valid_generator = DataLoader(valid_set,
                                  batch_size=batch_size,
-                                 shuffle=False)
+                                 shuffle=False,
+                                 num_workers=0)
     test_generator = DataLoader(test_set,
                                 batch_size=test_batch_size,
-                                shuffle=False)
+                                shuffle=False,
+                                num_workers=0)
 
     # Save model summary
     lu.save_model_summary(out_dir, comb_model, criterion, optimizer)
@@ -339,16 +341,20 @@ def parse_args():
     """
     # Data for ukbb
     parser.add_argument(
-            '--per-chr-data',
+            '--train-dataset',
             type=str,
-            #default='/home/cam27/scratch/UKBB/WHITE_BRITISH/FILTER_MAF_FIRST/LESS_INDS/DIETNET_PREP/UKBB_WhiteBritish_730KSNPs_chr%i_randomsubset.hdf5'
-            default='/home/cam27/scratch/UKBB/WHITE_BRITISH/FILTER_MAF_FIRST/LESS_INDS/DIETNET_PREP/genotypes_mat_allchr.hdf5'
+            default='/home/cam27/scratch/UKBB/WHITE_BRITISH/FILTER_MAF_FIRST/LESS_INDS/DIETNET_PREP/ukbb_randomsubset_train.hdf5'
+            )
+    parser.add_argument(
+            '--valid-dataset',
+            type=str,
+            default='/home/cam27/scratch/UKBB/WHITE_BRITISH/FILTER_MAF_FIRST/LESS_INDS/DIETNET_PREP/ukbb_randomsubset_valid.hdf5'
             )
 
     parser.add_argument(
-            '--metadata',
+            '--test-dataset',
             type=str,
-            default='/home/cam27/scratch/UKBB/WHITE_BRITISH/FILTER_MAF_FIRST/LESS_INDS/DIETNET_PREP/UKBB_WhiteBritish_730KSNPs_datasetinfo_randomsubset.hdf5'
+            default='/home/cam27/scratch/UKBB/WHITE_BRITISH/FILTER_MAF_FIRST/LESS_INDS/DIETNET_PREP/ukbb_randomsubset_test.hdf5'
             )
 
     parser.add_argument(
