@@ -54,10 +54,11 @@ class FoldDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         # Index can be a number or a list of numbers
-        print(index)
         if self.dataset is None:
             self.dataset = h5py.File(self.path, 'r')
-        return np.array(self.dataset['xs']), np.array(self.dataset['ys']), np.array(self.dataset['samples'])
+        return np.array(self.dataset['xs'][index], dtype=np.float32), \
+               np.array(self.dataset['ys'][index]), \
+               np.array(self.dataset['samples'][index], dtype=int) #np.array(self.dataset['samples'][index])
 
 
 def shuffle(indices, seed=None):

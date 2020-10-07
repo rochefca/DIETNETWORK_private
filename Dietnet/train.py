@@ -79,6 +79,7 @@ def main():
     preprocess_params = np.load(args.preprocess_params)
     mus = preprocess_params['per_feature_mean']
     sigmas = preprocess_params['per_feature_sd']
+    mus, sigmas = torch.from_numpy(mus).float().to(device), torch.from_numpy(sigmas).float().to(device)
 
     # Replace missing values
     """
@@ -186,7 +187,7 @@ def main():
     # Monitoring: validation baseline
     print('Computing baseline')
     min_loss, best_acc = mlu.eval_step(valid_generator, len(valid_set),
-                                       discrim_model, criterion, mus, sigmas)
+                                       discrim_model, criterion, mus, sigmas, device)
     print('baseline loss:',min_loss, 'baseline acc:', best_acc)
 
     # Monitoring: Nb epoch without improvement after which to stop training
@@ -250,7 +251,7 @@ def main():
         # ---Validation---
         comb_model = comb_model.eval()
         epoch_loss, epoch_acc = mlu.eval_step(valid_generator, len(valid_set),
-                                              discrim_model, criterion, mus, sigmas)
+                                              discrim_model, criterion, mus, sigmas, device)
 
         valid_losses.append(epoch_loss)
         valid_acc.append(epoch_acc)
@@ -287,7 +288,7 @@ def main():
 
     # ---Test---
     comb_model = comb_model.eval()
-    score, pred, acc = mlu.test(test_generator, len(test_set), discrim_model)
+    score, pred, acc = mlu.test(test_generator, len(test_set), discrim_model, mus, sigmas, device)
 
     print('Final accuracy:', str(acc))
     print('total running time:', str(total_time))

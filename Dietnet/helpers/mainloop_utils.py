@@ -8,14 +8,15 @@ from helpers import model
 from helpers import dataset_utils as du
 
 
-def eval_step(valid_generator, set_size, discrim_model, criterion, mus, sigmas):
+def eval_step(valid_generator, set_size, discrim_model, criterion, mus, sigmas, device):
     valid_minibatch_mean_losses = []
     valid_minibatch_n_right = [] # nb of good classifications
 
     for x_batch, y_batch, _ in valid_generator:
         # Put data on GPU
         print('Eval step, loading data on GPU')
-        x_batch, y_batch = np.array(x_batch).to(device), np.array(y_batch).to(device)
+        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+
         # Replace missing values
         print('Eval step, replacing missing values')
         du.replace_missing_values(x_batch, mus)
@@ -67,7 +68,7 @@ def has_improved(best_acc, actual_acc, min_loss, actual_loss):
     return False
 
 
-def test(test_generator, set_size, discrim_model):
+def test(test_generator, set_size, discrim_model, mus, sigmas, device):
     test_minibatch_n_right = [] # nb of good classifications in a minibatch
 
     for i, (x_batch, y_batch, samples) in enumerate(test_generator):
