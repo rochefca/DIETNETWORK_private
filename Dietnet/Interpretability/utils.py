@@ -4,7 +4,12 @@ import pandas as pd
 import numpy as np
 import torch.nn as nn
 import torch
-from scipy.stats import spearmanr
+try:
+    from scipy.stats import spearmanr
+except ImportError:
+    print('Cannot load spearmanr. Continuing without correlation computation...')
+    pass
+
 import matplotlib.pyplot as plt
 
 def make_summary_tables(x_test, test_generator, snp_locations):
