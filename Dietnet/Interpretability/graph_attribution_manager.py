@@ -333,7 +333,8 @@ class GraphAttributionManager(AttributionManager):
     def plot_attr_histograms(self, 
                              save_path=None, 
                              plot_options={'ylim': (0, 50000)}, 
-                             scatter_options={'bins': np.arange(-1e-4, 1e-4, 1e-6)}):
+                             scatter_options={'bins': np.arange(-1e-4, 1e-4, 1e-6)},
+                             pops_to_view=[0, 1]):
         """
         Plots histogram of snp attributions (per variant per population)
         """
@@ -344,9 +345,10 @@ class GraphAttributionManager(AttributionManager):
             attrs = self.convert_numpy_array_to_df(self.agg_attributions, 'attributions')
 
             #  can pass kwargs directly into facetgrid
-            g = sns.FacetGrid(attrs, row='Population', col='Variant', margin_titles=True, **plot_options)
+            g = sns.FacetGrid(attrs[(attrs.Population.isin(pops_to_view))], row='Population', col='Variant', margin_titles=True, **plot_options)
             g.map(sns.distplot, 'attributions', **scatter_options);
             g.set(**plot_options)
+            g.set_xticklabels(rotation=45)
 
             g.savefig(save_path)
 
@@ -358,8 +360,10 @@ class GraphAttributionManager(AttributionManager):
     def plot_attr_individuals(self,
                               save_path=None, 
                               plot_options={'ylim': (0, 2000)}, 
-                              scatter_options={'bins': np.arange(-5e-6, 5e-6, 1e-7), 'kde': False},
-                              pops_to_view=[0, 1]):
+                              scatter_options={'bins': np.arange(-1e-4, 1e-4, 1e-6), 'kde': False},
+                              pops_to_view=[0, 1, 2, 3, 4],
+                              indv_to_view=None):
+
         if self.graph_mode_individual:
             if save_path is None:
                 save_path = os.path.join(self.working_dir, 'attr_hist_indv.png')
@@ -367,13 +371,19 @@ class GraphAttributionManager(AttributionManager):
             with h5py.File(self.raw_attributions_file, 'r') as hf:
                 self.attr_type = list(hf.keys())[0]
                 n_categories = hf[self.attr_type].shape[2]
-                n_datapoints = np.random.choice(hf[self.attr_type].shape[0], size=16)
-                data_to_plot = np.concatenate([hf[self.attr_type][i].reshape(1, -1, n_categories) for i in n_datapoints])
+                if indv_to_view is None:
+                    size = 1
+                    indv_to_view = np.random.choice(hf[self.attr_type].shape[0], size=size)
+                else:
+                    size = len(indv_to_view)
+                data_to_plot = np.concatenate([hf[self.attr_type][i].reshape(1, -1, n_categories) for i in indv_to_view])
                 attrs = self.convert_numpy_array_to_df(data_to_plot, 'attributions', names=['individual', 'SNP', 'Population'])
+                attrs['Variant'] = np.repeat(self.genotypes_data[indv_to_view].flatten().cpu().numpy(), n_categories)
 
             #  can pass kwargs directly into facetgrid
-            g = sns.FacetGrid(attrs[(attrs.Population.isin(pops_to_view))], row='individual', col='Population', margin_titles=True, **plot_options)
+            g = sns.FacetGrid(attrs[(attrs.Population.isin(pops_to_view))], row='Population', col='Variant', margin_titles=True, **plot_options)
             g.map(sns.distplot, 'attributions', **scatter_options);
             g.set(**plot_options)
+            g.set_xticklabels(rotation=45)
 
             g.savefig(save_path)

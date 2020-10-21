@@ -166,7 +166,8 @@ def main(args):
     #torch.cuda.empty_cache()
     #print('Cleared out unneeded memory. Ready for inference')
 
-    baseline = torch.zeros(1, x_test[0].shape[0]).to(device)
+    #baseline = torch.zeros(1, x_test[0].shape[0]).to(device)                # this is doing ordinary 0-baseline
+    baseline = test_generator.dataset.xs.min(0).values.view(1,-1).to(device) # this is doing "encoded" 0-baseline
 
     attr_manager = am.AttributionManager()
 

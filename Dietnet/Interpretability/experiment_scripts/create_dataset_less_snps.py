@@ -29,8 +29,8 @@ def create_dataset():
     args = parse_args()
 
     exp_path = Path(args.exp_path)
-    full_path = exp_path / args.exp_name 
-    full_path = full_path / '{}_fold{}/'.format(args.exp_name, args.which_fold)
+    full_path = exp_path / args.exp_name
+    full_paths = [full_path / '{}_fold{}/'.format(args.exp_name, fold) for fold in args.which_fold]
 
     print('Loading data')
     # Load samples, snp names and genotype values
@@ -42,15 +42,21 @@ def create_dataset():
     attr_manager = gam.GraphAttributionManager()
     attr_manager.set_device(torch.device('cpu'))
 
-    hf = h5py.File(os.path.join(full_path, 'attrs_avg.h5'), 'r')
-    attr_manager.set_agg_attributions(hf['avg_attr'][:, :, :])
+    abs_attr_all_pops = []
 
-    attr_manager.set_feat_names(np.load(os.path.join(full_path, 'additional_data.npz'))['feature_names'])
-    attr_manager.set_label_names(np.load(os.path.join(full_path, 'additional_data.npz'))['label_names'])
-    attr_manager.set_labels(torch.from_numpy(np.load(os.path.join(full_path, 'additional_data.npz'))['test_labels']))
+    for full_path in full_paths:
+        hf = h5py.File(os.path.join(full_path, 'attrs_avg.h5'), 'r')
+        attr_manager.set_agg_attributions(np.nan_to_num(hf['avg_attr'][:, :, :]))
 
-    abs_attr_all_pops = np.abs(attr_manager.agg_attributions[:, 1, :]).sum(1)
-    
+        #abs_attr_all_pops.append(np.abs(attr_manager.agg_attributions).sum(1).sum(1))        # rank attributions based on sum of absolute values across variant and across populations
+        abs_attr_all_pops.append(np.amax(np.abs(attr_manager.agg_attributions), axis=(1,2)))  # rank attributions based on max of absolute values across variant and across populations
+
+    abs_attr_all_pops = np.stack(abs_attr_all_pops).mean(0) # take mean across all folds
+
+    attr_manager.set_feat_names(np.load(os.path.join(full_paths[0], 'additional_data.npz'))['feature_names']) # pick one arbitrarily
+    attr_manager.set_label_names(np.load(os.path.join(full_paths[0], 'additional_data.npz'))['label_names'])
+    attr_manager.set_labels(torch.from_numpy(np.load(os.path.join(full_paths[0], 'additional_data.npz'))['test_labels']))
+
     if args.percentile_to_remove is not None:
         remove_threshold = np.percentile(abs_attr_all_pops, args.percentile_to_remove)
         to_keep = abs_attr_all_pops < remove_threshold
@@ -103,10 +109,10 @@ def parse_args():
             )
 
     parser.add_argument(
-            '--which-fold',
+            '--which-fold', 
             type=int,
-            default=0,
-            help='Which fold to train (1st fold is 0). Default: %(default)i'
+            nargs="*", 
+            help='Which fold(s) to train (1st fold is 0).'
             )
 
     parser.add_argument(
