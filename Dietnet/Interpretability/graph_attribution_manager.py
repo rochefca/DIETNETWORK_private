@@ -6,7 +6,16 @@ import os
 
 import numpy as np
 import torch
-import seaborn as sns
+import h5py
+
+try:
+    import seaborn as sns
+    default_sns_scatter = sns.scatterplot
+except ImportError:
+    print('Cannot load seaborn. Continuing without visualizations...')
+    default_sns_scatter = None
+    pass
+
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -49,6 +58,20 @@ class GraphAttributionManager(AttributionManager):
         return (self.working_dir is not None) and \
         (self.genotypes_data is not None) and \
         (self.agg_attributions is not None) and \
+        (self.feat_names is not None) and \
+        (self.label_names is not None) and \
+        (self.labels is not None)
+    
+    
+    @property
+    def graph_mode_individual(self):
+        """
+        Returns true if you have everything you need to compute graphs (on per individual basis)
+        (does not type check, so you can still get errors!)
+        """
+        return (self.working_dir is not None) and \
+        (self.genotypes_data is not None) and \
+        (self.raw_attributions_file is not None) and \
         (self.feat_names is not None) and \
         (self.label_names is not None) and \
         (self.labels is not None)
@@ -116,13 +139,16 @@ class GraphAttributionManager(AttributionManager):
             pops = metric(genotypes_data).permute(1,0).unsqueeze(-1).repeat(1, 1, len(labels.unique()))
         return pops
     
-    def convert_numpy_array_to_df(self, array, level_name):
+    def convert_numpy_array_to_df(self, array, level_name, names=['SNP', 'Variant', 'Population']):
         """
-        This converts a numpy array of size (# SNPs, # variants, # populations) into a
-        pandas.DataFrame with additional colums: ['SNP', 'Variant', 'Population']
+        This converts a numpy array into a
+        pandas.DataFrame with additional colums specified by names.
+        
+        By default, array is of size (# SNPs, # variants, # populations) 
+        and the resulting pandas dataframe has columns ['SNP', 'Variant', 'Population']
+        
         This is used for plotting
         """
-        names = ['SNP', 'Variant', 'Population']
         index = pd.MultiIndex.from_product([range(s)for s in array.shape], names=names)
         df = pd.DataFrame({level_name: array.flatten()}, index=index)
 
@@ -149,7 +175,8 @@ class GraphAttributionManager(AttributionManager):
         self.plot_two_dfs_against_eachother(attr_1, attr_2, name_1, name_2, row, col, hue, save_path, scatter_options, plot_options)
 
 
-    def plot_two_dfs_against_eachother(self, df_1, df_2, name_1, name_2, row, col, hue, save_path, scatter_options={}, plot_options={}):
+    def plot_two_dfs_against_eachother(self, df_1, df_2, name_1, name_2, row, col, hue, save_path, 
+                                       scatter_options={}, plot_options={}, sns_method=default_sns_scatter):
         """
         Given pandas dataframes df_{1,2} with columns (SNP, Variant, Population, name_{1,2}),
         Each representing variable values with names name_1 and name_2
@@ -164,14 +191,14 @@ class GraphAttributionManager(AttributionManager):
         
         #  can pass kwargs directly into facetgrid
         g = sns.FacetGrid(df_merged, row=row, col=col, hue=hue, margin_titles=True, **plot_options)
-        g.map(sns.scatterplot, name_1, name_2, **scatter_options);
+        g.map(sns_method, name_1, name_2, **scatter_options);
         #g.set(**plot_options)
         
         g.savefig(save_path)
 
 
     #######################################################
-    #########              attr plots             #########
+    #########         (Global) attr plots         #########
     #########                                     #########
     #######################################################
 
@@ -183,7 +210,8 @@ class GraphAttributionManager(AttributionManager):
                             save_path=None,
                             global_metric=False,
                             scatter_options={}, 
-                            plot_options={}):
+                            plot_options={},
+                            sns_method=default_sns_scatter):
         """
         Plots attributions vs metric 
         metric is a function of the provided genotypes_data and labels
@@ -221,9 +249,17 @@ class GraphAttributionManager(AttributionManager):
                                                    hue="Variant",
                                                    save_path=save_path,
                                                    scatter_options=scatter_options, 
-                                                   plot_options=plot_options)
+                                                   plot_options=plot_options,
+                                                   sns_method=sns_method)
 
-    def plot_attr_vs_gene_freq(self, genotypes_data=None, labels=None, save_path=None, global_metric=False, scatter_options={}, plot_options={}):
+    def plot_attr_vs_gene_freq(self, 
+                               genotypes_data=None, 
+                               labels=None, 
+                               save_path=None, 
+                               global_metric=False, 
+                               scatter_options={}, 
+                               plot_options={}, 
+                               sns_method=default_sns_scatter):
         """
         Plots genotype frequency vs attributions for each population and each variant
         """
@@ -235,13 +271,22 @@ class GraphAttributionManager(AttributionManager):
                                  save_path,
                                  global_metric,
                                  scatter_options, 
-                                 plot_options)
+                                 plot_options,
+                                 sns_method=sns_method)
 
-    def plot_attr_vs_allele_freq(self, genotypes_data=None, labels=None, ref=1, save_path=None, global_metric=False, scatter_options={}, plot_options={}):
+    def plot_attr_vs_allele_freq(self, 
+                                 genotypes_data=None, 
+                                 labels=None, 
+                                 ref=1, 
+                                 save_path=None, 
+                                 global_metric=False, 
+                                 scatter_options={}, 
+                                 plot_options={}, 
+                                 sns_method=default_sns_scatter):
         """
         Plots allele frequency vs attributions for each population and each variant
         """
-        
+
         get_allele_freq_fixed_ref = lambda x: self.get_allele_freq(x, ref=ref)
 
         self.plot_attr_vs_metric(get_allele_freq_fixed_ref, 
@@ -251,9 +296,16 @@ class GraphAttributionManager(AttributionManager):
                                  save_path,
                                  global_metric,
                                  scatter_options, 
-                                 plot_options)
+                                 plot_options,
+                                 sns_method=sns_method)
 
-    def plot_attr_vs_snp_score(self, snp_scores, score_name, save_path=None, scatter_options={}, plot_options={}):
+    def plot_attr_vs_snp_score(self, 
+                               snp_scores, 
+                               score_name, 
+                               save_path=None, 
+                               scatter_options={}, 
+                               plot_options={}, 
+                               sns_method=default_sns_scatter):
         """
         Plots snp scores vs attributions for each population and each variant
         snp scores can be fst scores or  PCA loadings, etc...
@@ -274,4 +326,64 @@ class GraphAttributionManager(AttributionManager):
                                             "Variant", 
                                             save_path, 
                                             scatter_options, 
-                                            plot_options)
+                                            plot_options,
+                                            sns_method=sns_method)
+
+
+    def plot_attr_histograms(self, 
+                             save_path=None, 
+                             plot_options={'ylim': (0, 50000)}, 
+                             scatter_options={'bins': np.arange(-1e-4, 1e-4, 1e-6)},
+                             pops_to_view=[0, 1]):
+        """
+        Plots histogram of snp attributions (per variant per population)
+        """
+        if self.graph_mode:
+            if save_path is None:
+                save_path = os.path.join(self.working_dir, 'attr_hist.png')
+
+            attrs = self.convert_numpy_array_to_df(self.agg_attributions, 'attributions')
+
+            #  can pass kwargs directly into facetgrid
+            g = sns.FacetGrid(attrs[(attrs.Population.isin(pops_to_view))], row='Population', col='Variant', margin_titles=True, **plot_options)
+            g.map(sns.distplot, 'attributions', **scatter_options);
+            g.set(**plot_options)
+            g.set_xticklabels(rotation=45)
+
+            g.savefig(save_path)
+
+    #######################################################
+    #########       (Individual) attr plots       #########
+    #########                                     #########
+    #######################################################
+
+    def plot_attr_individuals(self,
+                              save_path=None, 
+                              plot_options={'ylim': (0, 2000)}, 
+                              scatter_options={'bins': np.arange(-1e-4, 1e-4, 1e-6), 'kde': False},
+                              pops_to_view=[0, 1, 2, 3, 4],
+                              indv_to_view=None):
+
+        if self.graph_mode_individual:
+            if save_path is None:
+                save_path = os.path.join(self.working_dir, 'attr_hist_indv.png')
+
+            with h5py.File(self.raw_attributions_file, 'r') as hf:
+                self.attr_type = list(hf.keys())[0]
+                n_categories = hf[self.attr_type].shape[2]
+                if indv_to_view is None:
+                    size = 1
+                    indv_to_view = np.random.choice(hf[self.attr_type].shape[0], size=size)
+                else:
+                    size = len(indv_to_view)
+                data_to_plot = np.concatenate([hf[self.attr_type][i].reshape(1, -1, n_categories) for i in indv_to_view])
+                attrs = self.convert_numpy_array_to_df(data_to_plot, 'attributions', names=['individual', 'SNP', 'Population'])
+                attrs['Variant'] = np.repeat(self.genotypes_data[indv_to_view].flatten().cpu().numpy(), n_categories)
+
+            #  can pass kwargs directly into facetgrid
+            g = sns.FacetGrid(attrs[(attrs.Population.isin(pops_to_view))], row='Population', col='Variant', margin_titles=True, **plot_options)
+            g.map(sns.distplot, 'attributions', **scatter_options);
+            g.set(**plot_options)
+            g.set_xticklabels(rotation=45)
+
+            g.savefig(save_path)

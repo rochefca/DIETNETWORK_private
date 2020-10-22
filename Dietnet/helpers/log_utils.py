@@ -90,7 +90,7 @@ def save_model_params(out_dir, model):
     torch.save(model.state_dict(), os.path.join(out_dir, filename))
 
 
-def save_results(out_dir, samples, labels, label_names, score, pred):
+def save_results(out_dir, samples, labels, label_names, score, pred, n_epochs):
     filename = 'model_predictions.npz'
 
     print('Saving model predictions to %s' % os.path.join(out_dir, filename))
@@ -100,7 +100,8 @@ def save_results(out_dir, samples, labels, label_names, score, pred):
              test_labels=labels.cpu(),
              test_scores=score.cpu(),
              test_preds=pred.cpu(),
-             label_names=label_names)
+             label_names=label_names,
+             n_epochs=n_epochs)
 
 
 def save_additional_data(out_dir,
