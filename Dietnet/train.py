@@ -131,15 +131,15 @@ def main():
     # Training loop hyper param
     n_epochs = args.epochs
     batch_size = 138
-    test_batch_size = 16 # smaller since doing attributions on this!
 
     # Minibatch generators
-    train_generator = DataLoader(train_set, batch_size=batch_size)
+    train_generator = DataLoader(train_set, 
+                                 batch_size=batch_size)
     valid_generator = DataLoader(valid_set,
                                  batch_size=batch_size,
                                  shuffle=False)
     test_generator = DataLoader(test_set,
-                                batch_size=test_batch_size,
+                                batch_size=batch_size,
                                 shuffle=False)
 
     # Save model summary
@@ -227,6 +227,7 @@ def main():
 
         if patience >= max_patience:
             has_early_stoped = True
+            n_epochs = epoch - patience
             break # exit training loop
 
         # Anneal laerning rate
@@ -256,7 +257,8 @@ def main():
                     test_set.samples,
                     test_set.ys,
                     data['label_names'],
-                    score, pred)
+                    score, pred, 
+                    n_epochs)
 
     # Save additional data
     lu.save_additional_data(out_dir,

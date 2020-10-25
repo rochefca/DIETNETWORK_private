@@ -123,7 +123,8 @@ def main(args):
                                        args.which_fold, 
                                        args.seed, 
                                        args.train_valid_ratio, 
-                                       device)
+                                       device,
+                                       args.batch_size)
 
     # Load embedding
     emb = du.load_embedding(os.path.join(args.exp_path,args.embedding),
@@ -161,13 +162,12 @@ def main(args):
                                input_dropout=0., 
                                incl_bias=True)
 
-    test_batch_size = 12 # smaller since doing attributions on this!
-
     #del data, folds_indexes, train_indexes, valid_indexes, samples_train, samples_valid, x_train, x_valid, y_train, y_valid, mus, sigmas, x_train_normed, x_valid_normed, train_set, valid_set
     #torch.cuda.empty_cache()
     #print('Cleared out unneeded memory. Ready for inference')
 
-    baseline = torch.zeros(1, x_test[0].shape[0]).to(device)
+    #baseline = torch.zeros(1, x_test[0].shape[0]).to(device)                # this is doing ordinary 0-baseline
+    baseline = test_generator.dataset.xs.min(0).values.view(1,-1).to(device) # this is doing "encoded" 0-baseline
 
     attr_manager = am.AttributionManager()
 
@@ -253,6 +253,13 @@ if __name__ == '__main__':
             '--which-fold',
             type=int,
             default=0,
+            help='Which fold to train (1st fold is 0). Default: %(default)i'
+            )
+
+    parser.add_argument(
+            '--batch_size',
+            type=int,
+            default=12,
             help='Which fold to train (1st fold is 0). Default: %(default)i'
             )
 
