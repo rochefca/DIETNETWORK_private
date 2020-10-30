@@ -160,7 +160,8 @@ class GraphAttributionManager(AttributionManager):
                                           row, col, 
                                           hue, save_path,  
                                           scatter_options={}, 
-                                          plot_options={}):
+                                          plot_options={},
+                                          sns_method=default_sns_scatter):
         """
         Given numpy arrays arr_1 and arr_2 of sizes (# SNPs, # variants, # populations),
         Each represents variabel values with names name_1 and name_2
@@ -172,7 +173,7 @@ class GraphAttributionManager(AttributionManager):
         attr_2 = self.convert_numpy_array_to_df(arr_2, name_2)
 
         #  make plots
-        self.plot_two_dfs_against_eachother(attr_1, attr_2, name_1, name_2, row, col, hue, save_path, scatter_options, plot_options)
+        self.plot_two_dfs_against_eachother(attr_1, attr_2, name_1, name_2, row, col, hue, save_path, scatter_options, plot_options, sns_method)
 
 
     def plot_two_dfs_against_eachother(self, df_1, df_2, name_1, name_2, row, col, hue, save_path, 
