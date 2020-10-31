@@ -244,3 +244,39 @@ def load_theano_model(n_feats_emb, emb_n_hidden_u, discrim_n_hidden1_u, discrim_
                                                       incl_softmax=True) # Theano includes softmax in model
 
     return model_to_return
+
+
+def load_model(model_path, 
+               emb, 
+               device, 
+               n_feats, 
+               n_hidden_u, 
+               n_hidden1_u, 
+               n_hidden2_u, 
+               n_targets, 
+               input_dropout, 
+               incl_bias=True, 
+               incl_softmax=False):
+    """
+    Load (discrim) model for test time / attribution computation
+    """
+    comb_model = model.CombinedModel(
+        n_feats,
+        n_hidden_u,
+        n_hidden1_u, 
+        n_hidden2_u,
+        n_targets,
+        param_init=None,
+        input_dropout=input_dropout,
+        incl_bias=incl_bias,
+        incl_softmax=incl_softmax)
+
+    comb_model.load_state_dict(torch.load(model_path))
+    comb_model.to(device)
+    comb_model = comb_model.eval()
+    discrim_model = create_disc_model_multi_gpu(comb_model, emb, device, incl_softmax)
+
+    del comb_model
+    torch.cuda.empty_cache()
+
+    return discrim_model

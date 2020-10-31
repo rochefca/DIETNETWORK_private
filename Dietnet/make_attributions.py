@@ -14,6 +14,7 @@ import torch.nn.functional as F
 
 import helpers.dataset_utils as du
 from helpers import mainloop_utils as mlu
+from helpers.mainloop_utils import load_model
 import helpers.model as model
 from Interpretability import attribution_manager as am
 import helpers.log_utils as lu
@@ -69,28 +70,6 @@ def load_data(exp_path, dataset, folds_indexes, which_fold, seed, train_valid_ra
     torch.cuda.empty_cache()
     
     return test_generator, x_test
-
-def load_model(model_path, emb, device, n_feats, n_hidden_u, n_hidden1_u,  n_hidden2_u, n_targets, input_dropout, incl_bias=True, incl_softmax=False):
-    comb_model = model.CombinedModel(
-        n_feats,
-        n_hidden_u,
-        n_hidden1_u, 
-        n_hidden2_u,
-        n_targets,
-        param_init=None,
-        input_dropout=input_dropout,
-        incl_bias=incl_bias,
-        incl_softmax=incl_softmax)
-
-    comb_model.load_state_dict(torch.load(model_path))
-    comb_model.to(device)
-    comb_model = comb_model.eval()
-    discrim_model = mlu.create_disc_model_multi_gpu(comb_model, emb, device, incl_softmax)
-
-    del comb_model
-    torch.cuda.empty_cache()
-
-    return discrim_model
 
 
 def main(args):

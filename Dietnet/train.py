@@ -222,6 +222,9 @@ def main():
                 best_acc = epoch_acc
             if epoch_loss < min_loss:
                 min_loss = epoch_loss
+            # Save model parameters (for later inference)
+            print('best acc achieved: {} (loss {}) at epoch {} saving model ...'.format(best_acc, epoch_loss, epoch))
+            lu.save_model_params(out_dir, comb_model)
         else:
             patience += 1
 
@@ -242,10 +245,19 @@ def main():
     # Finish training
     print('Early stoping:', has_early_stoped)
 
-    # Save model parameters (for later inference)
-    lu.save_model_params(out_dir, comb_model)
-
     # ---Test---
+
+    #  reload weights from early stopped model
+    discrim_model = mlu.load_model(os.path.join(out_dir, 'model_params.pt'), 
+                                   emb, 
+                                   device,
+                                   n_feats=n_feats_emb,
+                                   n_hidden_u=emb_n_hidden_u,
+                                   n_hidden1_u=discrim_n_hidden1_u,
+                                   n_hidden2_u=discrim_n_hidden2_u,
+                                   n_targets=n_targets,
+                                   input_dropout=args.input_dropout)
+
     comb_model = comb_model.eval()
     score, pred, acc = mlu.test(test_generator, len(test_set), discrim_model)
 
