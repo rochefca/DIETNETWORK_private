@@ -67,6 +67,11 @@ def create_dataset():
         to_keep[np.argsort(abs_attr_all_pops)[::-1][args.num_to_remove:]] = True
         print('Datset size reduced to: {} (top {} removed)'.format(to_keep.sum(), 
                                                                    args.num_to_remove))
+    
+    if args.random_snp_removal:
+        # randomly shuffle which entries to keep
+        # this is to compute baseline for SNP attribution removal experiment
+        to_keep = np.random.permutation(to_keep)
 
     genotypes = data['inputs'][:, to_keep]
     snps = data['snp_names'][to_keep]
@@ -167,6 +172,13 @@ def parse_args():
             default='embedding-new.npz',
             help=('Filename for returned embedding from this script. Default: %(default)s')
             )
+    
+    parser.add_argument(
+            '--random-snp-removal',
+            action='store_true',
+            help=('Randomly remove SNPs (for baseline comparison)')
+            )
+
 
     return parser.parse_args()
 

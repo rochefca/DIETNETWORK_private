@@ -1,9 +1,8 @@
 #!/bin/bash
 #SBATCH --cpus-per-task=4
 #SBATCH --account=def-hussinju
-#SBATCH --time=4:00:00
+#SBATCH --time=1:00:00
 #SBATCH --mem=12GB
-#SBATCH --gres=gpu:1
 #SBATCH -o /lustre04/scratch/sciclun4/exp_results/DIETNETWORK/1000G/slurm_output/slurm-%j.out
 
 #  print arguments, node and date
