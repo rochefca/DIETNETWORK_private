@@ -155,6 +155,7 @@ class Discrim_net2(nn.Module):
         x = self.input_dropout(x)
 
         z1 = F.linear(x, fatLayer_weights, bias=self.fat_bias)
+
         #z1 = self.hidden_1(x)
         a1 = torch.relu(z1)
         a1 = self.bn1(a1)
