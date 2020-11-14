@@ -8,6 +8,7 @@ __pycache__/
 *.csv
 run.sh
 make_attributions_run.sh
+Dietnet/Interpretability/experiment_scripts/*.sh
 
 DATA/
 EXPERIMENT_01/
