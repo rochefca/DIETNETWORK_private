@@ -23,6 +23,7 @@ class AttributionManager():
         self.genotypes_data = None        # genotype data  (for attribution analysis)
         self.data_generator = None        # data generator (for creating attributions)
         self.device = torch.device('cpu') # use cpu by default
+        self.embedding = None             # embedding needed for attribution of combined model
 
     @property
     def create_mode(self):
@@ -93,8 +94,22 @@ class AttributionManager():
 
     def set_device(self, device):
         self.device = device
+    
+    def set_embedding(self, embedding):
+        """
+        Sets embedding (if using combined model)
+        """
+        self.embedding = embedding
+        self.n_feats_emb = embedding.shape[1]
+    
+    @property
+    def create_mode_with_embedding(self):
+        """
+        create_mode + has embedding available
+        """
+        return self.create_mode and (self.embedding is not None)
 
-    def create_raw_attributions(self, compute_subset, only_true_labels=False, **kwargs):
+    def create_raw_attributions(self, compute_subset, only_true_labels=False, use_embedding=False, **kwargs):
         """
         Computes attr_func for true_labels or for all labels and saves them to an h5 file
         This file can be quite large (20GB)
@@ -102,6 +117,10 @@ class AttributionManager():
         if not self.create_mode:
             print('Cannot create attributions. Set model and data_generator and attr_type')
         else:
+            
+            if use_embedding:
+                print('Computing with embeddings. Ensure that the model you use is compatable with this or you will get silent errors!')
+            
             #  These kwargs get passed into self.attr_func.attribute 
             #  We save them in this variable
             self.attr_additional_args = kwargs
@@ -111,23 +130,35 @@ class AttributionManager():
                     n_categories = 1
                 hf.create_dataset(self.attr_type, shape=[n_samples, n_feats, n_categories])
 
+                #  include additional dataset of attributions for the embedding
+                if use_embedding:
+                    if self.create_mode_with_embedding:
+                        hf.create_dataset(self.attr_type + '_emb', shape=[n_samples, 
+                                                                          n_feats, 
+                                                                          self.n_feats_emb, 
+                                                                          n_categories])
+
                 #  compute attributions at end of training (only for correct class)
                 with torch.no_grad():
                     idx = 0
                     for x_batch, y_batch, _ in self.data_generator:
                         # Forward pass
                         if only_true_labels:
-                             attr = self._compute_attribute_true_class(x_batch,
-                                                                       y_batch,
-                                                                       **kwargs)
+                             attr, attr_emb = self._compute_attribute_true_class(x_batch,
+                                                                                 y_batch,
+                                                                                 use_embedding,
+                                                                                 **kwargs)
                         else:
-                            attr = self._compute_attribute_each_class(x_batch,
-                                                                      np.arange(n_categories),
-                                                                      **kwargs)
+                            attr, attr_emb = self._compute_attribute_each_class(x_batch,
+                                                                                np.arange(n_categories),
+                                                                                use_embedding,
+                                                                                **kwargs)
                         #  make sure you are on CPU when copying to hf object
                         hf[self.attr_type][idx:idx+len(x_batch)] = attr.permute(1,2,0).cpu().numpy()
+                        if use_embedding:
+                            hf[self.attr_type+ '_emb'][idx:idx+len(x_batch)] = attr_emb.permute(1,2,3,0).cpu().numpy()
                         idx += len(x_batch)
-                        del x_batch, y_batch, attr
+                        del x_batch, y_batch, attr, attr_emb
                         torch.cuda.empty_cache()
 
                         if compute_subset:
@@ -137,37 +168,71 @@ class AttributionManager():
                         print('completed {}/{} [{:3f}%]'.format(idx, n_samples, 100*idx/n_samples))
             print('saved attributions to {}'.format(self.raw_attributions_file))
 
-    def _compute_attribute_each_class(self, input_batch, label_names, **kwargs):
+    def _compute_attribute_each_class(self, input_batch, label_names, use_embedding=False, **kwargs):
         """
         computes attributions for all classes, 
         **kwargs passed directly to attr_func.attribute (e.g. n_steps=50)
         all inputs and computations done on device, output stays on device
         """
+        inputs = (input_batch.to(self.device)) if not use_embedding else (self.embedding.view(1,-1).repeat(input_batch.shape[0], 
+                                                                                                       1).to(self.device), 
+                                                                          input_batch.to(self.device))
 
         atts_per_class = []
+        atts_per_class_emb = None
+        if use_embedding:
+            atts_per_class_emb = []
+
         for label in label_names:
             #  don't pass args which produce other outputs (e.g. return_convergence_delta for int_grad)
-            attr = self.attr_func.attribute(inputs=(input_batch.to(self.device)), 
+            attr = self.attr_func.attribute(inputs=inputs, 
                                             target=torch.empty(input_batch.shape[0]).fill_(label).to(self.device).long(),
                                             **kwargs)
-            #  if >1 outputs, keep only the first one (the attributions)
-            if isinstance(attr, tuple):
-                attr = attr[0]
-            atts_per_class.append(attr.detach())
-        return torch.stack(atts_per_class)
+            if use_embedding:
+                attr_emb = attr[0]
+                attr = attr[1]
+            else:
+                #  if >1 outputs, keep only the first one (the attributions of the SNPs)
+                if isinstance(attr, tuple):
+                    attr = attr[0]
 
-    def _compute_attribute_true_class(self, input_batch, target_batch, **kwargs):
+            atts_per_class.append(attr.detach())
+            if use_embedding:
+                atts_per_class_emb.append(attr_emb.detach().view(-1, 
+                                                                 self.embedding.shape[0], 
+                                                                 self.n_feats_emb))
+        
+        atts_per_class = torch.stack(atts_per_class)
+        if use_embedding:
+            atts_per_class_emb = torch.stack(atts_per_class_emb)
+
+        return atts_per_class, atts_per_class_emb
+
+    def _compute_attribute_true_class(self, input_batch, target_batch, use_embedding=False, **kwargs):
         """
         Only returns attributions where the target is the true class
         **kwargs passed directly to attr_func.attribute (e.g. n_steps=50)
         """
-        attr = self.attr_func.attribute(inputs=(input_batch.to(self.device)),
+
+        inputs = (input_batch.to(self.device)) if not use_embedding else (self.embedding.view(1,-1).repeat(input_batch.shape[0], 
+                                                                                               1).to(self.device), 
+                                                                          input_batch.to(self.device))
+
+        attr = self.attr_func.attribute(inputs=inputs,
                                         target=target_batch.to(self.device),
                                         **kwargs)
         #  if >1 outputs, keep only the first one (the attributions)
-        if isinstance(attr, tuple):
-            attr = attr[0]
-        return attr[None,:,:]
+        if use_embedding:
+            attr_emb = attr[0].view(-1, 
+                                    self.embedding.shape[0], 
+                                    self.n_feats_emb)
+            attr = attr[1]
+        else:
+            if isinstance(attr, tuple):
+                attr = attr[0]
+            attr_emb = None
+        
+        return attr[None,:,:], attr_emb[None,:,:,:]
 
     def _load_data(self):
         """
@@ -201,7 +266,7 @@ class AttributionManager():
 
             avg_int_grads = torch.zeros((n_feats, 3, n_categories), dtype=torch.float32).to(self.device)
             counts_int_grads = torch.zeros((n_feats, 3, n_categories), dtype=torch.int32).to(self.device)
-            ground_truth_mask = torch.eye(n_categories, n_categories, dtype=torch.int32).view(1,1,n_categories, n_categories).to(self.device)
+            ground_truth_mask = torch.eye(n_categories, n_categories, dtype=torch.int32).view(1, 1, n_categories, n_categories).to(self.device)
 
             with h5py.File(self.raw_attributions_file, 'r') as hf:
                 for i, dat in enumerate(self.genotypes_data):
