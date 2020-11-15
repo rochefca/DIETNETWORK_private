@@ -22,7 +22,17 @@ def generate_embedding():
     for fold in range(len(folds_indexes)):
         print('Computing embedding of fold', str(fold))
         # Get fold data (x,y,samples) that are not test data
-        (x, y, _) = du.get_fold_data(fold, folds_indexes, data)
+        (_,_,_,
+         x_train, y_train, _,
+         x_valid, y_valid, _,
+         _,_,_) = du.get_fold_data(fold, folds_indexes, data)
+
+        if args.include_valid:
+            x = np.concatenate((x_train, x_valid))
+            y = np.concatenate((y_train, y_valid))
+        else:
+            x = x_train
+            y = y_train
 
         # Compute embedding for the fold
         emb = compute_fold_embedding(x, y)
@@ -99,6 +109,14 @@ def parse_args():
             help=('Filename of folds indexes returned by create_dataset.py '
                   'The file must be in directory specified with exp-path. '
                   'Default: %(default)s')
+            )
+
+    parser.add_argument(
+            '--include-valid',
+            action='store_true',
+            help=('Use this flag if to include samples from validation set '
+                  'in the embedding computation. Otherwise embedding is '
+                  'computed using only samples from training set.')
             )
 
     parser.add_argument(

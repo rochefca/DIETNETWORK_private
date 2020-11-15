@@ -159,7 +159,7 @@ def load_data_(filename):
 
 
 def load_folds_indexes(filename):
-    data = np.load(filename)
+    data = np.load(filename, allow_pickle=True)
 
     return data['folds_indexes']
 
@@ -172,7 +172,34 @@ def load_embedding(filename, which_fold):
     return emb
 
 
-def get_fold_data(which_fold, folds_indexes, data, split_ratio=None, seed=None):
+def get_fold_data(which_fold, folds_indexes, data):
+    # Indices of each set for the fold (0:train, 1:valid, 2:test)
+    fold_indexes = folds_indexes[which_fold]
+    train_indexes = fold_indexes[0]
+    valid_indexes = fold_indexes[1]
+    test_indexes = fold_indexes[2]
+
+    # Get data (x,y,samples) of each set (train, valid, test)
+    x_train = data['inputs'][train_indexes]
+    y_train = data['labels'][train_indexes]
+    samples_train = data['samples'][train_indexes]
+
+    x_valid = torch.from_numpy(data['inputs'][valid_indexes])
+    y_valid = torch.from_numpy(data['labels'][valid_indexes])
+    samples_valid = data['samples'][valid_indexes]
+
+    x_test = torch.from_numpy(data['inputs'][test_indexes])
+    y_test = torch.from_numpy(data['labels'][test_indexes])
+    samples_test = data['samples'][test_indexes]
+
+    return train_indexes, valid_indexes, test_indexes,\
+           x_train, y_train, samples_train,\
+           x_valid, y_valid, samples_valid,\
+           x_test, y_test, samples_test
+
+
+# !!This is the old function that has to be removed eventually!!
+def _get_fold_data(which_fold, folds_indexes, data, split_ratio=None, seed=None):
     # Set aside fold nb of which_fold for test
     test_indexes = folds_indexes[which_fold]
 
