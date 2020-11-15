@@ -31,21 +31,53 @@ def shuffle(indices, seed=None):
     np.random.shuffle(indices)
 
 
-def partition(indices, nb_folds):
-    # If folds with an equal nb of samples is not possible: last fold will
-    # have more samples. The number of extra samples will always be < nb_folds
+def partition(indices, nb_folds, train_valid_ratio, seed=None):
+    """
+    The partitions contains indices of train. valid and test sets
+    for each fold.
+    If folds test sets with equal nb of samples is not possible:
+    test set of last fold will have more samples
+    The number of extra samples will always be < nb_folds
+    """
+    # Shuffle data is seed is not None
+    if seed is not None:
+        np.random.seed(seed)
+    shuffle(indices, seed=seed)
+
+    # Get indices of examples in test set for each fold
     step = math.floor(len(indices)/nb_folds)
     split_pos = [i for i in range(0, len(indices), step)]
 
-    splitted_indices = []
+    test_indices_byfold = []
     start = split_pos[0] # same as start=0
     for i in range(nb_folds-1):
-        splitted_indices.append(indices[start:(start+step)])
+        test_indices_byfold.append(indices[start:(start+step)])
         start = split_pos[i+1]
 
-    splitted_indices.append(indices[start:]) # append last fold
+    test_indices_byfold.append(indices[start:]) # append last fold
 
-    return splitted_indices
+    # Get indices of train+valid sets for each fold
+    train_indices_byfold = []
+    valid_indices_byfold = []
+    for i in range(nb_folds):
+        other_folds = [f for f in range(nb_folds) if f!=i]
+        # Concat test indices of other folds: this is train+valid indices
+        train_valid_indices = np.concatenate(
+                [test_indices_byfold[f] for f in other_folds]
+                )
+        # Split into train and valid sets
+        train_indices, valid_indices = split(train_valid_indices,
+                train_valid_ratio, seed)
+        train_indices_byfold.append(train_indices)
+        valid_indices_byfold.append(valid_indices)
+
+    # Train, valid and test indices of examples for each fold
+    indices_byfold = []
+    for train_indices, valid_indices, test_indices in zip(
+            train_indices_byfold, valid_indices_byfold, test_indices_byfold):
+        indices_byfold.append([train_indices, valid_indices, test_indices])
+
+    return indices_byfold
 
 
 def split(indices, split_ratio, seed):

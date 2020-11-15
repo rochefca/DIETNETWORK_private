@@ -23,7 +23,7 @@ def create_dataset():
     # Ensure given samples are in same order in genotypes and labels files
     ordered_labels = du.order_labels(samples, samples_in_labels, labels)
 
-    # If labels are categories, one hot encode labels
+    # If labels are categories, encode labels as numbers
     if args.prediction == 'classification' :
         label_names, encoded_labels = numeric_encode_labels(ordered_labels)
 
@@ -47,10 +47,12 @@ def create_dataset():
 
     # Partition data into fold (using indexes of the numpy arrays)
     indices = np.arange(len(samples))
-    du.shuffle(indices, seed=args.seed)
-    partition = du.partition(indices, args.nb_folds)
+    partition = du.partition(indices,
+                             args.nb_folds,
+                             args.train_valid_ratio,
+                             seed=args.seed)
     np.savez(os.path.join(args.exp_path,args.fold_out),
-             folds_indexes=partition,
+             folds_indexes=np.array(partition,dtype=object),
              seed=np.array([args.seed]))
 
 
@@ -139,6 +141,15 @@ def parse_args():
             type=int,
             default=5,
             help='Number of folds. Use 1 for no folds. Default: %(default)i'
+            )
+
+    parser.add_argument(
+            '--train-valid-ratio',
+            type=float,
+            default=0.75,
+            help=('Ratio (between 0-1) for split of train and valid sets. '
+                  'For example, 0.75 will use 75%% of data for training '
+                  'and 25%% of data for validation. Default: %(default).2f')
             )
 
     parser.add_argument(

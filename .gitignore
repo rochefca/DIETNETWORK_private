@@ -10,5 +10,7 @@ run.sh
 make_attributions_run.sh
 Dietnet/Interpretability/experiment_scripts/*.sh
 
+# Debugging and testing
 DATA/
 EXPERIMENT_01/
+Test_dev/
