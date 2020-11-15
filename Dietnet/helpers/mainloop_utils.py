@@ -256,9 +256,11 @@ def load_model(model_path,
                n_targets, 
                input_dropout, 
                incl_bias=True, 
-               incl_softmax=False):
+               incl_softmax=False,
+               load_comb_model=False):
     """
     Load (discrim) model for test time / attribution computation
+    Set load_comb_model to True to load the combined model instead
     """
     comb_model = model.CombinedModel(
         n_feats,
@@ -274,9 +276,14 @@ def load_model(model_path,
     comb_model.load_state_dict(torch.load(model_path))
     comb_model.to(device)
     comb_model = comb_model.eval()
-    discrim_model = create_disc_model_multi_gpu(comb_model, emb, device, incl_softmax)
+    
+    if load_comb_model:
+        return comb_model
 
-    del comb_model
-    torch.cuda.empty_cache()
+    else:
+        discrim_model = create_disc_model_multi_gpu(comb_model, emb, device, incl_softmax)
 
-    return discrim_model
+        del comb_model
+        torch.cuda.empty_cache()
+
+        return discrim_model

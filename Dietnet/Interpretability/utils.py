@@ -117,7 +117,7 @@ def check_completeness(self, model, indices, baseline, test_generator, attributi
     hf.close()
 
 
-def get_spearman_correlation(attr_1, attr_2, use_abs):
+def get_spearman_correlation(attr_1, attr_2, use_abs, ignore_zeros=False):
     """
     Computes the Spearman rank correlation between two attribution maps and gets the p-value.
     The formula is (denoting observation $i$ of variables $X, Y$ as $X_i$ and $Y_i$ respectively):
@@ -171,6 +171,9 @@ def get_spearman_correlation(attr_1, attr_2, use_abs):
     """
     if use_abs:
         attr_1, attr_2 = np.abs(attr_1), np.abs(attr_2)
+    if ignore_zeros:
+        mask = (attr_1 == 0) | (attr_2 == 0)
+        attr_1, attr_2 = attr_1[~mask], attr_2[~mask]
     corr, pval = spearmanr(attr_1, attr_2, axis=1, nan_policy='omit')
     
     #  Notice that since the # observations is so high, the power is high, so the pvalues are always 0!

@@ -148,6 +148,9 @@ class GraphAttributionManager(AttributionManager):
         and the resulting pandas dataframe has columns ['SNP', 'Variant', 'Population']
         
         This is used for plotting
+        
+        Note: the levels for variable k in the output df with just be 0,..., array.shape[k]
+        (so if subsetting prior to plotting, will need to change these to display the correct levels)
         """
         index = pd.MultiIndex.from_product([range(s)for s in array.shape], names=names)
         df = pd.DataFrame({level_name: array.flatten()}, index=index)
@@ -381,7 +384,7 @@ class GraphAttributionManager(AttributionManager):
                 attrs = self.convert_numpy_array_to_df(data_to_plot, 'attributions', names=['individual', 'SNP', 'Population'])
                 attrs['Variant'] = np.repeat(self.genotypes_data[indv_to_view].flatten().cpu().numpy(), n_categories)
 
-            #  can pass kwargs directly into facetgrid
+            #  can pass kwargs directly into facetgrid            
             g = sns.FacetGrid(attrs[(attrs.Population.isin(pops_to_view))], row='Population', col='Variant', margin_titles=True, **plot_options)
             g.map(sns.distplot, 'attributions', **scatter_options);
             g.set(**plot_options)
