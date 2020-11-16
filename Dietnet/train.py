@@ -48,10 +48,13 @@ def main():
      x_train, y_train, samples_train,
      x_valid, y_valid, samples_valid,
      x_test, y_test, samples_test) = du.get_fold_data(args.which_fold,
-                                        folds_indexes,
-                                        data,
-                                        split_ratio=args.train_valid_ratio,
-                                        seed=args.seed)
+                                        folds_indexes, data)
+
+    # Convert np array to torch tensors
+    x_train, x_valid, x_test = torch.from_numpy(x_train), \
+            torch.from_numpy(x_valid), torch.from_numpy(x_test)
+    y_train, y_valid, y_test = torch.from_numpy(y_train), \
+            torch.from_numpy(y_valid), torch.from_numpy(y_test)
 
     # Put data on GPU
     x_train, x_valid, x_test = x_train.to(device), x_valid.to(device), \
@@ -103,9 +106,6 @@ def main():
                     torch.max(valid_set.ys).item(),
                     torch.max(test_set.ys).item()) + 1 #0-based encoding
 
-    #import pdb
-    #pdb.set_trace()
-
     print('\n***Nb features in models***')
     print('n_feats_emb:', n_feats_emb)
     print('n_feats:', n_feats)
@@ -133,7 +133,7 @@ def main():
     batch_size = 138
 
     # Minibatch generators
-    train_generator = DataLoader(train_set, 
+    train_generator = DataLoader(train_set,
                                  batch_size=batch_size)
     valid_generator = DataLoader(valid_set,
                                  batch_size=batch_size,
@@ -248,8 +248,8 @@ def main():
     # ---Test---
 
     #  reload weights from early stopped model
-    discrim_model = mlu.load_model(os.path.join(out_dir, 'model_params.pt'), 
-                                   emb, 
+    discrim_model = mlu.load_model(os.path.join(out_dir, 'model_params.pt'),
+                                   emb,
                                    device,
                                    n_feats=n_feats_emb,
                                    n_hidden_u=emb_n_hidden_u,
@@ -269,7 +269,7 @@ def main():
                     test_set.samples,
                     test_set.ys,
                     data['label_names'],
-                    score, pred, 
+                    score, pred,
                     n_epochs)
 
     # Save additional data

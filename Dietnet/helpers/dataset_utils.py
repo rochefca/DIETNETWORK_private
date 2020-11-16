@@ -184,12 +184,12 @@ def get_fold_data(which_fold, folds_indexes, data):
     y_train = data['labels'][train_indexes]
     samples_train = data['samples'][train_indexes]
 
-    x_valid = torch.from_numpy(data['inputs'][valid_indexes])
-    y_valid = torch.from_numpy(data['labels'][valid_indexes])
+    x_valid = data['inputs'][valid_indexes]
+    y_valid = data['labels'][valid_indexes]
     samples_valid = data['samples'][valid_indexes]
 
-    x_test = torch.from_numpy(data['inputs'][test_indexes])
-    y_test = torch.from_numpy(data['labels'][test_indexes])
+    x_test = data['inputs'][test_indexes]
+    y_test = data['labels'][test_indexes]
     samples_test = data['samples'][test_indexes]
 
     return train_indexes, valid_indexes, test_indexes,\
