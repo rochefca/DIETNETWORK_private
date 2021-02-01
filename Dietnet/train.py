@@ -98,9 +98,8 @@ def main():
     n_feats_emb = emb.size()[1] # input of aux net
     n_feats = emb.size()[0] # input of main net
     # Hidden layers size
-    emb_n_hidden_u = 100
-    discrim_n_hidden1_u = 100
-    discrim_n_hidden2_u = 100
+    emb_n_hidden_u = [int(i.strip()) for i in args.emb_n_hidden_u.strip('[').strip(']').split(',')]
+    discrim_n_hidden_u = [int(i.strip()) for i in args.discrim_n_hidden_u.strip('[').strip(']').split(',')]
     # Output layer
     n_targets = max(torch.max(train_set.ys).item(),
                     torch.max(valid_set.ys).item(),
@@ -112,9 +111,8 @@ def main():
 
     comb_model = model.CombinedModel(
                  n_feats=n_feats_emb,
-                 n_hidden_u=emb_n_hidden_u,
-                 n_hidden1_u=discrim_n_hidden1_u,
-                 n_hidden2_u=discrim_n_hidden2_u,
+                 n_hidden_u_aux=emb_n_hidden_u,
+                 n_hidden_u_main=discrim_n_hidden_u,
                  n_targets=n_targets,
                  param_init=args.param_init,
                  input_dropout=args.input_dropout)
@@ -252,9 +250,8 @@ def main():
                                    emb,
                                    device,
                                    n_feats=n_feats_emb,
-                                   n_hidden_u=emb_n_hidden_u,
-                                   n_hidden1_u=discrim_n_hidden1_u,
-                                   n_hidden2_u=discrim_n_hidden2_u,
+                                   n_hidden_u_aux=emb_n_hidden_u,
+                                   n_hidden_u_main=discrim_n_hidden_u,
                                    n_targets=n_targets,
                                    input_dropout=args.input_dropout)
 
@@ -351,7 +348,23 @@ def parse_args():
             type=int,
             default=23,
             help=('Fix feed for shuffle of data before the split into train '
-                  'and valid sets. Defaut: %(default)i')
+                  'and valid sets. Default: %(default)i')
+            )
+
+    parser.add_argument(
+            '--emb-n-hidden-u',
+            type=str,
+            default='[100,100]',
+            help=('Number of neurons in every layers of auxiliary network. '
+                'Default: %(default)s')
+            )
+
+    parser.add_argument(
+            '--discrim-n-hidden-u',
+            type=str,
+            default='[100,100]',
+            help=('Number of neurons in every layers of main network. '
+                  'Default: %(default)s')
             )
 
     parser.add_argument(
