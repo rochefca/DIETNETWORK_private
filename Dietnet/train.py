@@ -90,13 +90,26 @@ def main():
     emb = emb.float()
 
     # Normalize embedding
-    emb_norm = (emb ** 2).sum(0) ** 0.5
-    emb = emb/emb_norm
+    #emb_norm = (emb ** 2).sum(0) ** 0.5
+    #emb = emb/emb_norm
+
+    # Alternative embedding
+    #print('Other normalization for embedding')
+    #mean_by_col = emb.mean(0)
+    #std_by_col = emb.std(0)
+
+    #emb = (emb - mean_by_col)/std_by_col
 
     # Instantiate model
     # Input size
-    n_feats_emb = emb.size()[1] # input of aux net
+    if len(emb.size()) == 1:
+        n_feats_emb = 1 # input of aux net, 1 value per SNP
+        emb = torch.unsqueeze(emb, dim=1) # match size in Linear fct (nb_snpsx1)
+    else:
+        n_feats_emb = emb.size()[1] # input of aux net
+
     n_feats = emb.size()[0] # input of main net
+
     # Hidden layers size
     emb_n_hidden_u = [int(i.strip()) for i in args.emb_n_hidden_u.strip('[').strip(']').split(',')]
     discrim_n_hidden_u = [int(i.strip()) for i in args.discrim_n_hidden_u.strip('[').strip(']').split(',')]
