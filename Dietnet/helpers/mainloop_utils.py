@@ -88,9 +88,9 @@ def create_disc_model(comb_model, emb, device):
     returns a function that performs the forward pass on it (with fixed embedding).
     this should be okay since python passes args by reference, so even if comb_model
     weights change, the corresponding function will also change
-    
-    Finally, remember that disc_model will be in whatever mode comb_model is, 
-    so if comb_model is in train mode, switch it to eval mode before calling 
+
+    Finally, remember that disc_model will be in whatever mode comb_model is,
+    so if comb_model is in train mode, switch it to eval mode before calling
     ßthe output of this.
     """
 
@@ -106,9 +106,9 @@ def create_disc_model_multi_gpu(comb_model, emb, device, eps=1e-5, incl_softmax=
     """
     Transforms comb_model + emb into equivalent discrim model (with fatlayer weights added as parameters)
     This model can now be sent to multiple GPUs without any bugs
-    (cannot do multi-GPU with comb_model since dataparallel will attempt to split the embedding up, 
+    (cannot do multi-GPU with comb_model since dataparallel will attempt to split the embedding up,
     which will result in size incompatibilities)
-    
+
     Must pass batchnorm eps seperately in case loading from Theano model!
     Must pass incl_softmax seperately in case loading from Theano model!
     """
@@ -119,7 +119,7 @@ def create_disc_model_multi_gpu(comb_model, emb, device, eps=1e-5, incl_softmax=
     emb_n_hidden_u = 100
     discrim_n_hidden1_u = 100
     discrim_n_hidden2_u = 100
-    
+
     #  put in eval mode and send to correct device
     comb_model = comb_model.eval().to(device)
     emb = emb.to(device)
@@ -127,10 +127,10 @@ def create_disc_model_multi_gpu(comb_model, emb, device, eps=1e-5, incl_softmax=
 
     #  initialize discriminitive network with fatlayer as a parameter
     #  send back to cpu while loading weights
-    disc_net = model.Discrim_net(fatLayer_weights, 
-                                 n_feats=n_feats_emb, 
-                                 n_hidden1_u=discrim_n_hidden1_u, 
-                                 n_hidden2_u=discrim_n_hidden2_u, 
+    disc_net = model.Discrim_net(fatLayer_weights,
+                                 n_feats=n_feats_emb,
+                                 n_hidden1_u=discrim_n_hidden1_u,
+                                 n_hidden2_u=discrim_n_hidden2_u,
                                  n_targets=26,
                                  eps=eps,
                                  incl_softmax=incl_softmax)
@@ -214,19 +214,19 @@ def load_theano_model(n_feats_emb, emb_n_hidden_u, discrim_n_hidden1_u, discrim_
     #  disc model
     convert_theano_array_to_pytorch_tensor_1d(comb_model.disc_net.fat_bias, theano_model_params['arr_3'])
 
-    convert_theano_bn_pytorch(comb_model.disc_net.bn1, 
-                          theano_model_params['arr_4'], 
-                          theano_model_params['arr_5'], 
-                          theano_model_params['arr_6'], 
+    convert_theano_bn_pytorch(comb_model.disc_net.bn1,
+                          theano_model_params['arr_4'],
+                          theano_model_params['arr_5'],
+                          theano_model_params['arr_6'],
                           theano_model_params['arr_7'])
 
     convert_theano_array_to_pytorch_tensor(comb_model.disc_net.hidden_2.weight, theano_model_params['arr_8'])
     convert_theano_array_to_pytorch_tensor_1d(comb_model.disc_net.hidden_2.bias, theano_model_params['arr_9'])
 
-    convert_theano_bn_pytorch(comb_model.disc_net.bn2, 
-                              theano_model_params['arr_10'], 
-                              theano_model_params['arr_11'], 
-                              theano_model_params['arr_12'], 
+    convert_theano_bn_pytorch(comb_model.disc_net.bn2,
+                              theano_model_params['arr_10'],
+                              theano_model_params['arr_11'],
+                              theano_model_params['arr_12'],
                               theano_model_params['arr_13'])
 
     convert_theano_array_to_pytorch_tensor(comb_model.disc_net.out.weight, theano_model_params['arr_14'])
@@ -238,24 +238,23 @@ def load_theano_model(n_feats_emb, emb_n_hidden_u, discrim_n_hidden1_u, discrim_
 
         emb = emb.to(device)
         #  create disc_net from loaded comb_model
-        model_to_return = create_disc_model_multi_gpu(model_to_return, 
-                                                      emb, device, 
+        model_to_return = create_disc_model_multi_gpu(model_to_return,
+                                                      emb, device,
                                                       eps=1e-4, # Theano uses 1e-4 for batch norm instead of PyTorch default of 1e-5
                                                       incl_softmax=True) # Theano includes softmax in model
 
     return model_to_return
 
 
-def load_model(model_path, 
-               emb, 
-               device, 
-               n_feats, 
-               n_hidden_u, 
-               n_hidden1_u, 
-               n_hidden2_u, 
-               n_targets, 
-               input_dropout, 
-               incl_bias=True, 
+def load_model(model_path,
+               emb,
+               device,
+               n_feats,
+               n_hidden_u_aux,
+               n_hidden_u_main,
+               n_targets,
+               input_dropout,
+               incl_bias=True,
                incl_softmax=False,
                load_comb_model=False):
     """
@@ -264,9 +263,8 @@ def load_model(model_path,
     """
     comb_model = model.CombinedModel(
         n_feats,
-        n_hidden_u,
-        n_hidden1_u, 
-        n_hidden2_u,
+        n_hidden_u_aux,
+        n_hidden_u_main,
         n_targets,
         param_init=None,
         input_dropout=input_dropout,
@@ -276,12 +274,13 @@ def load_model(model_path,
     comb_model.load_state_dict(torch.load(model_path))
     comb_model.to(device)
     comb_model = comb_model.eval()
-    
+
     if load_comb_model:
         return comb_model
 
     else:
-        discrim_model = create_disc_model_multi_gpu(comb_model, emb, device, incl_softmax)
+        #discrim_model = create_disc_model_multi_gpu(comb_model, emb, device, incl_softmax)
+        discrim_model = create_disc_model(comb_model, emb, device)
 
         del comb_model
         torch.cuda.empty_cache()

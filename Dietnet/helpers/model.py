@@ -9,34 +9,45 @@ class Feat_emb_net(nn.Module):
     def __init__(self, n_feats, n_hidden_u, param_init):
         super(Feat_emb_net, self).__init__()
 
-        # Theano values for param init
-        if param_init is not None:
+        # Hidden layers
+        self.hidden_layers = []
+        for i in range(len(n_hidden_u)):
+            # First layer
+            if i == 0:
+                self.hidden_layers.append(
+                        nn.Linear(n_feats, n_hidden_u[i], bias=False)
+                        )
+            else:
+                self.hidden_layers.append(
+                        nn.Linear(n_hidden_u[i-1], n_hidden_u[i], bias=False)
+                        )
+        self.hidden_layers = nn.ModuleList(self.hidden_layers)
+
+        # Parameters initialization
+        if param_init is not None and len(self.hidden_layers)==2:
+            print('Initializing auxiliary network with weights from Theano')
+
+            # Load weights from Theano
             params = np.load(param_init)
 
-        # 1st hidden layer
-        self.hidden_1 = nn.Linear(n_feats, n_hidden_u, bias=False)
-        if param_init is not None:
-            self.hidden_1.weight = torch.nn.Parameter(
+            # Init layers with Theano weights
+            self.hidden_layers[0].weight = torch.nn.Parameter(
                     torch.from_numpy(params['w1_aux']))
-        else:
-            nn.init.uniform_(self.hidden_1.weight, a=-0.02, b=0.02)
-
-        # 2nd hidden layer
-        self.hidden_2 = nn.Linear(n_hidden_u, n_hidden_u, bias=False)
-        if param_init is not None:
-            self.hidden_2.weight = torch.nn.Parameter(
+            self.hidden_layers[1].weight = torch.nn.Parameter(
                     torch.from_numpy(params['w2_aux']))
+
         else:
-            nn.init.uniform_(self.hidden_2.weight, a=-0.02, b=0.02)
+            for layer in self.hidden_layers:
+                nn.init.uniform_(layer.weight, a=-0.02, b=0.02)
 
 
     def forward(self, x):
-        ze1 = self.hidden_1(x)
-        ae1 = torch.tanh(ze1)
-        ze2 = self.hidden_2(ae1)
-        ae2 = torch.tanh(ze2)
+        for layer in self.hidden_layers:
+            ze = layer(x)
+            ae = torch.tanh(ze)
+            x = ae
 
-        return ae2
+        return ae
 
 
 class Discrim_net(nn.Module):
@@ -67,7 +78,7 @@ class Discrim_net(nn.Module):
 
         # Dropout
         self.dropout = nn.Dropout()
-        
+
         self.incl_softmax = incl_softmax
 
 
@@ -101,51 +112,72 @@ class Discrim_net2(nn.Module):
     Uses F.linear with passed weights instead
     """
     def __init__(self, n_feats,
-                 n_hidden1_u, n_hidden2_u, n_targets,
+                 n_hidden_u, n_targets,
                  param_init, input_dropout=0., eps=1e-5, incl_bias=True, incl_softmax=False):
         super(Discrim_net2, self).__init__()
 
-        # Theano values for params init
-        if param_init is not None:
-            params = np.load(param_init)
+        print('USING THE FLEXIBLE LAYERS IMPLEM')
+        self.hidden_layers = []
+        self.bn_fatLayer = None
+        self.bn = [] # batch normalization (all layers except first)
+        self.out = None # Output layer
+        self.incl_softmax = incl_softmax
 
         # Dropout on input layer
         self.input_dropout = nn.Dropout(p=input_dropout)
+        # Dropout
+        self.dropout = nn.Dropout()
 
-        # 1st hidden layer (we don't need this anymore)
-        #self.hidden_1 = F.linear(input, weight, bias=None)
-        self.bn1 = nn.BatchNorm1d(num_features=n_hidden1_u, eps=eps)
+        # ---Layers and batchnorm (bn)  definition ---
+        for i in range(len(n_hidden_u)):
+            # First layer: linear function handle in forward function below
+            if i == 0:
+                self.bn_fatLayer = nn.BatchNorm1d(num_features=n_hidden_u[i], eps=eps)
+            # Hidden layers
+            else:
+                self.hidden_layers.append(
+                        nn.Linear(n_hidden_u[i-1], n_hidden_u[i]))
+                self.bn.append(
+                        nn.BatchNorm1d(num_features=n_hidden_u[i], eps=eps))
+            # Output layer
+            self.out = nn.Linear(n_hidden_u[-1], n_targets)
 
-        # 2nd hidden layer
-        self.hidden_2 = nn.Linear(n_hidden1_u, n_hidden2_u)
-        if param_init is not None:
-            self.hidden_2.weight = torch.nn.Parameter(
+        self.hidden_layers = nn.ModuleList(self.hidden_layers)
+        self.bn = nn.ModuleList(self.bn)
+        # ---Parameters initialization---
+        # Theno init
+        if param_init is not None and len(self.hidden_layers)==2:
+            print('Initializing main network with weights from Theano')
+
+            # Load weights from Theano
+            params = np.load(param_init)
+
+            # Init layers with Theano weights
+            self.hidden_layers[0].weight = torch.nn.Parameter(
                     torch.from_numpy(params['w2_main']))
-        else:
-            nn.init.xavier_uniform_(self.hidden_2.weight)
-        nn.init.zeros_(self.hidden_2.bias)
-        self.bn2 = nn.BatchNorm1d(num_features=n_hidden2_u, eps=eps)
-
-        # Output layer
-        self.out = nn.Linear(n_hidden2_u, n_targets)
-        if param_init is not None:
             self.out.weight = torch.nn.Parameter(
                     torch.from_numpy(params['w3_main']))
-        else:
-            nn.init.xavier_uniform_(self.out.weight)
-        nn.init.zeros_(self.out.bias)
 
-        #  bias term for fat layer
+        # Regular init
+        else:
+            for layer in self.hidden_layers:
+                nn.init.xavier_uniform_(layer.weight)
+            nn.init.xavier_uniform_(self.out.weight)
+
+        # ---Bias initialization---
+        # Fat layer
         if incl_bias:
-            self.fat_bias = nn.Parameter(data=torch.rand(n_hidden1_u), requires_grad=True)
+            self.fat_bias = nn.Parameter(data=torch.rand(n_hidden_u[0]), requires_grad=True)
             nn.init.zeros_(self.fat_bias)
         else:
             self.fat_bias = None
 
-        # Dropout
-        self.dropout = nn.Dropout()
-        
-        self.incl_softmax = incl_softmax
+        # Hidden layers
+        for layer in self.hidden_layers:
+            nn.init.zeros_(layer.bias)
+
+        # Output layer
+        nn.init.zeros_(self.out.bias)
 
 
     def forward(self, x, fatLayer_weights):
@@ -154,19 +186,24 @@ class Discrim_net2(nn.Module):
         # now ^^^ is passed with forward
         x = self.input_dropout(x)
 
+        # Fat layer
         z1 = F.linear(x, fatLayer_weights, bias=self.fat_bias)
-
-        #z1 = self.hidden_1(x)
         a1 = torch.relu(z1)
-        a1 = self.bn1(a1)
+        a1 = self.bn_fatLayer(a1)
         a1 = self.dropout(a1)
 
-        z2 = self.hidden_2(a1)
-        a2 = torch.relu(z2)
-        a2 = self.bn2(a2)
-        a2 = self.dropout(a2)
+        # Hidden layers
+        next_input = a1
+        for layer, bn in zip(self.hidden_layers, self.bn):
+            z = layer(next_input)
+            a = torch.relu(z)
+            a = bn(a)
+            a = self.dropout(a)
+            next_input = a
 
-        out = self.out(a2)
+        # Output layer
+        out = self.out(next_input)
+
         # Softmax will be computed in the loss. But want this during attributions
         if self.incl_softmax:
             out = torch.softmax(out, 1)
@@ -175,14 +212,15 @@ class Discrim_net2(nn.Module):
 
 
 class CombinedModel(nn.Module):
-    def __init__(self, n_feats, n_hidden_u, n_hidden1_u, n_hidden2_u,
+    def __init__(self, n_feats, n_hidden_u_aux, n_hidden_u_main,
                  n_targets, param_init, input_dropout=0., eps=1e-5, incl_bias=True, incl_softmax=False):
         super(CombinedModel, self).__init__()
 
         # Initialize feat. embedding and discriminative networks
-        self.feat_emb = Feat_emb_net(n_feats, n_hidden_u, param_init)
-        self.disc_net = Discrim_net2(n_feats, n_hidden1_u, n_hidden2_u,
-                                     n_targets, param_init, input_dropout, eps, incl_bias, incl_softmax)
+        self.feat_emb = Feat_emb_net(n_feats, n_hidden_u_aux, param_init)
+        self.disc_net = Discrim_net2(n_feats, n_hidden_u_main, n_targets,
+                                     param_init, input_dropout, eps,
+                                     incl_bias, incl_softmax)
 
 
     def forward(self, emb, x_batch):
