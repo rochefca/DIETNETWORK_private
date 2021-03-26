@@ -9,6 +9,8 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
+import wandb
+
 import helpers.dataset_utils as du
 import helpers.model as model
 import helpers.mainloop_utils as mlu
@@ -110,10 +112,14 @@ def main():
 
     n_feats = emb.size()[0] # input of main net
 
-    # Hidden layers size
+    # Hidden layer size aux net
     emb_n_hidden_u = [int(i.strip()) for i in args.emb_n_hidden_u.strip('[').strip(']').split(',')]
-    discrim_n_hidden_u = [int(i.strip()) for i in args.discrim_n_hidden_u.strip('[').strip(']').split(',')]
-    # Output layer
+    # Hidden layer size main net
+    discrim_n_hidden_u = [emb_n_hidden_u[-1]] # first hidden layer must match size of aux output layer
+    discrim_n_hidden_u += [int(i.strip()) for i in args.discrim_n_hidden_u.strip('[').strip(']').split(',')]
+    print(emb_n_hidden_u)
+    print(discrim_n_hidden_u)
+    # Output layer main net
     n_targets = max(torch.max(train_set.ys).item(),
                     torch.max(valid_set.ys).item(),
                     torch.max(test_set.ys).item()) + 1 #0-based encoding
@@ -122,13 +128,29 @@ def main():
     print('n_feats_emb:', n_feats_emb)
     print('n_feats:', n_feats)
 
+    # --- CONFIG DICT W&B ---
+    config_dict = dict(
+            batch_size=138,
+            n_hidden_u_aux=emb_n_hidden_u,
+            n_hidden_u_main=discrim_n_hidden_u,
+            input_dropout=args.input_dropout,
+            patience=args.patience,
+            learning_rate=args.learning_rate,
+            learning_rate_annealing=args.learning_rate_annealing,
+            epochs=args.epochs)
+
+    print('wandb.init')
+    wandb.init(config=config_dict)
+    # Match log and executions
+    config = wandb.config
+
     comb_model = model.CombinedModel(
                  n_feats=n_feats_emb,
-                 n_hidden_u_aux=emb_n_hidden_u,
-                 n_hidden_u_main=discrim_n_hidden_u,
+                 n_hidden_u_aux=config.n_hidden_u_aux,
+                 n_hidden_u_main=config.n_hidden_u_main,
                  n_targets=n_targets,
                  param_init=args.param_init,
-                 input_dropout=args.input_dropout)
+                 input_dropout=config.input_dropout)
 
     #  Note: runs script in single GPU mode only!
     comb_model.to(device)
@@ -136,21 +158,21 @@ def main():
     # Loss
     criterion = nn.CrossEntropyLoss()
     # Optimizer
-    lr = args.learning_rate
+    lr = config.learning_rate
     optimizer = torch.optim.Adam(comb_model.parameters(), lr=lr)
 
     # Training loop hyper param
-    n_epochs = args.epochs
-    batch_size = 138
+    n_epochs = config.epochs
+    batch_size = config.batch_size
 
     # Minibatch generators
     train_generator = DataLoader(train_set,
-                                 batch_size=batch_size)
+                                 batch_size=config.batch_size)
     valid_generator = DataLoader(valid_set,
-                                 batch_size=batch_size,
+                                 batch_size=config.batch_size,
                                  shuffle=False)
     test_generator = DataLoader(test_set,
-                                batch_size=batch_size,
+                                batch_size=config.batch_size,
                                 shuffle=False)
 
     # Save model summary
@@ -172,9 +194,10 @@ def main():
 
     # Monitoring: Nb epoch without improvement after which to stop training
     patience = 0
-    max_patience = args.patience
+    max_patience = config.patience
     has_early_stoped = False
 
+    wandb.watch(comb_model, criterion, log='all', log_freq=100)
     total_time = 0
     for epoch in range(n_epochs):
         print('Epoch {} of {}'.format(epoch+1, n_epochs), flush=True)
@@ -217,6 +240,10 @@ def main():
         train_acc.append(epoch_acc)
         print('train loss:', epoch_loss, 'train acc:', epoch_acc, flush=True)
 
+        # W&B
+        wandb.log({'epoch':epoch, 'train_loss':epoch_loss, 'train_acc':epoch_acc}, step=epoch)
+
+
         # ---Validation---
         comb_model = comb_model.eval()
         epoch_loss, epoch_acc = mlu.eval_step(valid_generator, len(valid_set),
@@ -225,6 +252,9 @@ def main():
         valid_losses.append(epoch_loss)
         valid_acc.append(epoch_acc)
         print('valid loss:', epoch_loss, 'valid acc:', epoch_acc,flush=True)
+
+        # W&B
+        wandb.log({'valid_loss':epoch_loss, 'valid_acc':epoch_acc}, step=epoch)
 
         # Early stop
         if mlu.has_improved(best_acc, epoch_acc, min_loss, epoch_loss):
@@ -375,8 +405,8 @@ def parse_args():
     parser.add_argument(
             '--discrim-n-hidden-u',
             type=str,
-            default='[100,100]',
-            help=('Number of neurons in every layers of main network. '
+            default='[100]',
+            help=('Number of neurons in every layers of main network excluding 1st hidden layer. '
                   'Default: %(default)s')
             )
 
