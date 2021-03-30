@@ -27,9 +27,18 @@ def generate_embedding():
          x_valid, y_valid, _,
          _,_,_) = du.get_fold_data(fold, folds_indexes, data)
 
+        # Embedding on train+valid sets
         if args.include_valid:
             x = np.concatenate((x_train, x_valid))
             y = np.concatenate((y_train, y_valid))
+
+        # Embedding on valid set
+        elif args.only_valid:
+            print('Emb on valid')
+            x = x_valid
+            y = y_valid
+
+        # Embedding on training set
         else:
             x = x_train
             y = y_train
@@ -39,6 +48,7 @@ def generate_embedding():
         embedding_by_fold.append(emb)
 
     # Save
+    embedding_by_fold = np.array(embedding_by_fold)
     print('Saving embedding to', args.exp_path)
     np.savez(os.path.join(args.exp_path,args.out), emb=embedding_by_fold)
 
@@ -54,6 +64,7 @@ def compute_fold_embedding(xs, ys):
         # Select genotypes for samples of same class
         class_genotypes = xs[:,ys==c]
         nb = class_genotypes.shape[1] #nb of samples in that class
+        print('Class:', c, 'NB:', nb)
         for genotype in range(NB_POSSIBLE_GENOTYPES):
             col = NB_POSSIBLE_GENOTYPES*c+genotype
             embedding[:,col] = (class_genotypes == genotype).sum(axis=1)/nb
@@ -117,6 +128,12 @@ def parse_args():
             help=('Use this flag if to include samples from validation set '
                   'in the embedding computation. Otherwise embedding is '
                   'computed using only samples from training set.')
+            )
+
+    parser.add_argument(
+            '--only-valid',
+            action='store_true',
+            help='Compute embedding on validation set'
             )
 
     parser.add_argument(
