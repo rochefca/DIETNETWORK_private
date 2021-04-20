@@ -1,6 +1,8 @@
 import argparse
 import os
 import time
+import yaml
+import pprint
 
 import numpy as np
 
@@ -10,6 +12,8 @@ from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
 import wandb
+from ray import tune
+from ray.tune.integration.wandb import wandb_mixin, WandbLogger
 
 import helpers.dataset_utils as du
 import helpers.model as model
@@ -20,12 +24,39 @@ import helpers.log_utils as lu
 def main():
     args = parse_args()
 
-    # Directory to save experiment info
+    # Load config
+    f = open(args.config)
+    config = yaml.load(f, Loader=yaml.FullLoader)
+
+    # Create directory where results an exp info will be saved (exp_path/exp_name/fold)
     out_dir = lu.create_out_dir(args.exp_path, args.exp_name, args.which_fold)
 
-    # Save experiment parameters
-    lu.save_exp_params(out_dir, args)
+    # Add info (parsed on command line) to config
+    config['exp_path'] = args.exp_path
+    config['exp_name'] = args.exp_name
+    config['out_dir'] = out_dir
+    config['folds_indexes'] = args.folds_indexes
+    config['dataset'] = args.dataset
+    config['embedding'] = args.embedding
+    config['fold'] = args.which_fold
+    config['param_init'] = args.param_init
 
+    pprint.pprint(config)
+
+    # Save experiment configurations (for reproducibility)
+    lu.save_exp_params(config)
+
+    # Training process
+    analysis = tune.run(my_train,
+                        loggers=[WandbLogger],
+                        config=config,
+                        resources_per_trial={"gpu":1},
+                        local_dir=os.path.join(config['exp_path'],config['exp_name']),
+                        name='ray_results')
+
+
+@wandb_mixin
+def my_train(config, checkpoint_dir=None):
     # Set GPU
     print('Cuda available:', torch.cuda.is_available())
     print('Current cuda device ', torch.cuda.current_device())
@@ -33,23 +64,22 @@ def main():
     print('device:', device)
 
     # Fix seed
-    seed = args.seed
-    torch.backends.cudnn.deterministic = True
+    seed = config['seed']
+    #torch.backends.cudnn.deterministic = True
     torch.manual_seed(seed)
     np.random.seed(seed)
     if device.type=='cuda':
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
-    print('Seed:', str(seed))
 
     # Get fold data (indexes and samples are np arrays, x,y are tensors)
-    data = du.load_data(os.path.join(args.exp_path,args.dataset))
+    data = du.load_data(os.path.join(config['exp_path'], config['dataset']))
     folds_indexes = du.load_folds_indexes(
-            os.path.join(args.exp_path,args.folds_indexes))
+            os.path.join(config['exp_path'], config['folds_indexes']))
     (train_indexes, valid_indexes, test_indexes,
      x_train, y_train, samples_train,
      x_valid, y_valid, samples_valid,
-     x_test, y_test, samples_test) = du.get_fold_data(args.which_fold,
+     x_test, y_test, samples_test) = du.get_fold_data(config['fold'],
                                         folds_indexes, data)
 
     # Convert np array to torch tensors
@@ -86,40 +116,26 @@ def main():
     test_set = du.FoldDataset(x_test_normed, y_test, samples_test)
 
     # Load embedding
-    emb = du.load_embedding(os.path.join(args.exp_path,args.embedding),
-                            args.which_fold)
+    emb = du.load_embedding(os.path.join(config['exp_path'], config['embedding']),
+                            config['fold'])
     emb = emb.to(device)
     emb = emb.float()
 
     # Normalize embedding
-    #emb_norm = (emb ** 2).sum(0) ** 0.5
-    #emb = emb/emb_norm
+    emb_norm = (emb ** 2).sum(0) ** 0.5
+    emb = emb/emb_norm
 
-    # Alternative embedding
-    #print('Other normalization for embedding')
-    #mean_by_col = emb.mean(0)
-    #std_by_col = emb.std(0)
-
-    #emb = (emb - mean_by_col)/std_by_col
-
-    # Instantiate model
-    # Input size
+    # Get aux net input size (nb emb. features)
     if len(emb.size()) == 1:
         n_feats_emb = 1 # input of aux net, 1 value per SNP
         emb = torch.unsqueeze(emb, dim=1) # match size in Linear fct (nb_snpsx1)
     else:
         n_feats_emb = emb.size()[1] # input of aux net
 
+    # Get main net input size (nb features)
     n_feats = emb.size()[0] # input of main net
 
-    # Hidden layer size aux net
-    emb_n_hidden_u = [int(i.strip()) for i in args.emb_n_hidden_u.strip('[').strip(']').split(',')]
-    # Hidden layer size main net
-    discrim_n_hidden_u = [emb_n_hidden_u[-1]] # first hidden layer must match size of aux output layer
-    discrim_n_hidden_u += [int(i.strip()) for i in args.discrim_n_hidden_u.strip('[').strip(']').split(',')]
-    print(emb_n_hidden_u)
-    print(discrim_n_hidden_u)
-    # Output layer main net
+    # Get main net output size (nb targets)
     n_targets = max(torch.max(train_set.ys).item(),
                     torch.max(valid_set.ys).item(),
                     torch.max(test_set.ys).item()) + 1 #0-based encoding
@@ -128,29 +144,16 @@ def main():
     print('n_feats_emb:', n_feats_emb)
     print('n_feats:', n_feats)
 
-    # --- CONFIG DICT W&B ---
-    config_dict = dict(
-            batch_size=138,
-            n_hidden_u_aux=emb_n_hidden_u,
-            n_hidden_u_main=discrim_n_hidden_u,
-            input_dropout=args.input_dropout,
-            patience=args.patience,
-            learning_rate=args.learning_rate,
-            learning_rate_annealing=args.learning_rate_annealing,
-            epochs=args.epochs)
+    print('Model init')
 
-    print('wandb.init')
-    wandb.init(config=config_dict)
-    # Match log and executions
-    config = wandb.config
-
+    # --- MODEL INIT ---
     comb_model = model.CombinedModel(
-                 n_feats=n_feats_emb,
-                 n_hidden_u_aux=config.n_hidden_u_aux,
-                 n_hidden_u_main=config.n_hidden_u_main,
-                 n_targets=n_targets,
-                 param_init=args.param_init,
-                 input_dropout=config.input_dropout)
+            n_feats=n_feats_emb,
+            n_hidden_u_aux=config['nb_hidden_u_aux'],
+            n_hidden_u_main=config['nb_hidden_u_aux'][-1:]+config['nb_hidden_u_main'],
+            n_targets=n_targets,
+            param_init=config['param_init'],
+            input_dropout=config['input_dropout'])
 
     #  Note: runs script in single GPU mode only!
     comb_model.to(device)
@@ -158,25 +161,25 @@ def main():
     # Loss
     criterion = nn.CrossEntropyLoss()
     # Optimizer
-    lr = config.learning_rate
+    lr = config['learning_rate']
     optimizer = torch.optim.Adam(comb_model.parameters(), lr=lr)
 
     # Training loop hyper param
-    n_epochs = config.epochs
-    batch_size = config.batch_size
+    n_epochs = config['epochs']
+    batch_size = config['batch_size']
 
     # Minibatch generators
     train_generator = DataLoader(train_set,
-                                 batch_size=config.batch_size)
+                                 batch_size=batch_size)
     valid_generator = DataLoader(valid_set,
-                                 batch_size=config.batch_size,
+                                 batch_size=batch_size,
                                  shuffle=False)
     test_generator = DataLoader(test_set,
-                                batch_size=config.batch_size,
+                                batch_size=batch_size,
                                 shuffle=False)
 
     # Save model summary
-    lu.save_model_summary(out_dir, comb_model, criterion, optimizer)
+    lu.save_model_summary(config['out_dir'], comb_model, criterion, optimizer)
 
     # Monitoring: Epoch loss and accuracy
     train_losses = []
@@ -194,9 +197,11 @@ def main():
 
     # Monitoring: Nb epoch without improvement after which to stop training
     patience = 0
-    max_patience = config.patience
+    max_patience = config['patience']
     has_early_stoped = False
 
+    # tell wandb to watch what the model gets up to:
+    # log gradients and params every log_freq steps of training
     wandb.watch(comb_model, criterion, log='all', log_freq=100)
     total_time = 0
     for epoch in range(n_epochs):
@@ -221,7 +226,7 @@ def main():
 
             # Compute loss
             loss = criterion(discrim_model_out, y_batch)
-            # Compute gradients in discrim net
+            # Compute gradients
             loss.backward()
 
             # Optim
@@ -265,7 +270,7 @@ def main():
                 min_loss = epoch_loss
             # Save model parameters (for later inference)
             print('best acc achieved: {} (loss {}) at epoch {} saving model ...'.format(best_acc, epoch_loss, epoch))
-            lu.save_model_params(out_dir, comb_model)
+            lu.save_model_params(config['out_dir'], comb_model)
         else:
             patience += 1
 
@@ -277,7 +282,7 @@ def main():
         # Anneal laerning rate
         for param_group in optimizer.param_groups:
             param_group['lr'] = \
-                    param_group['lr'] * args.learning_rate_annealing
+                    param_group['lr'] * config['learning_rate_annealing']
 
         end_time = time.time()
         total_time += end_time-start_time
@@ -289,14 +294,14 @@ def main():
     # ---Test---
 
     #  reload weights from early stopped model
-    discrim_model = mlu.load_model(os.path.join(out_dir, 'model_params.pt'),
+    discrim_model = mlu.load_model(os.path.join(config['out_dir'], 'model_params.pt'),
                                    emb,
                                    device,
                                    n_feats=n_feats_emb,
-                                   n_hidden_u_aux=emb_n_hidden_u,
-                                   n_hidden_u_main=discrim_n_hidden_u,
+                                   n_hidden_u_aux=config['nb_hidden_u_aux'],
+                                   n_hidden_u_main=config['nb_hidden_u_aux'][-1:]+config['nb_hidden_u_main'],
                                    n_targets=n_targets,
-                                   input_dropout=args.input_dropout)
+                                   input_dropout=config['input_dropout'])
 
     comb_model = comb_model.eval()
     score, pred, acc = mlu.test(test_generator, len(test_set), discrim_model)
@@ -305,7 +310,7 @@ def main():
     print('total running time:', str(total_time))
 
     # Save results
-    lu.save_results(out_dir,
+    lu.save_results(config['out_dir'],
                     test_set.samples,
                     test_set.ys,
                     data['label_names'],
@@ -313,13 +318,12 @@ def main():
                     n_epochs)
 
     # Save additional data
-    lu.save_additional_data(out_dir,
+    lu.save_additional_data(config['out_dir'],
                             train_set.samples, valid_set.samples,
                             test_set.samples, test_set.ys,
                             pred, score,
                             data['label_names'], data['snp_names'],
                             mus, sigmas)
-
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -341,6 +345,13 @@ def parse_args():
             help=('Name of directory where to save the results. '
                   'This direcotry must be in the directory specified with '
                   'exp-path. ')
+            )
+
+    parser.add_argument(
+            '--config',
+            type=str,
+            default='config.yaml',
+            help='Yaml file of hyperparameter. Default: %(default)s'
             )
 
     parser.add_argument(
@@ -375,79 +386,6 @@ def parse_args():
             type=int,
             default=0,
             help='Which fold to train (1st fold is 0). Default: %(default)i'
-            )
-
-    parser.add_argument(
-            '--train-valid-ratio',
-            type=float,
-            default=0.75,
-            help=('Ratio (between 0-1) for split of train and valid sets. '
-                  'For example, 0.75 will use 75%% of data for training '
-                  'and 25%% of data for validation. Default: %(default).2f')
-            )
-
-    parser.add_argument(
-            '--seed',
-            type=int,
-            default=23,
-            help=('Fix feed for shuffle of data before the split into train '
-                  'and valid sets. Default: %(default)i')
-            )
-
-    parser.add_argument(
-            '--emb-n-hidden-u',
-            type=str,
-            default='[100,100]',
-            help=('Number of neurons in every layers of auxiliary network. '
-                'Default: %(default)s')
-            )
-
-    parser.add_argument(
-            '--discrim-n-hidden-u',
-            type=str,
-            default='[100]',
-            help=('Number of neurons in every layers of main network excluding 1st hidden layer. '
-                  'Default: %(default)s')
-            )
-
-    parser.add_argument(
-            '--patience',
-            type=int,
-            default=1000,
-            help=('Number of epochs without validation improvement after '
-                  'which to stop training. Default: %(default)i')
-            )
-
-    parser.add_argument(
-            '--learning-rate',
-            '-lr',
-            type=float,
-            default=0.00003,
-            help='Learning rate. Default: %(default)f'
-            )
-
-    parser.add_argument(
-            '--learning-rate-annealing',
-            '-lra',
-            type=float,
-            default=0.999,
-            help='Learning rate annealing. Default: %(default)f'
-            )
-
-    parser.add_argument(
-            '--epochs',
-            type=int,
-            default=20000,
-            help='Max number of epochs. Default: %(default)i'
-            )
-
-    parser.add_argument(
-            '--input-dropout',
-            type=float,
-            default=0.0,
-            help=('Input dropout. The number, between 0 and 1, indicates '
-                  'the probability of an element to be zeroed. '
-                  'Default: %(default)f')
             )
 
     parser.add_argument(

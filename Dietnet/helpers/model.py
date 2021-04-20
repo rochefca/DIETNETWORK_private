@@ -116,7 +116,6 @@ class Discrim_net2(nn.Module):
                  param_init, input_dropout=0., eps=1e-5, incl_bias=True, incl_softmax=False):
         super(Discrim_net2, self).__init__()
 
-        print('USING THE FLEXIBLE LAYERS IMPLEM')
         self.hidden_layers = []
         self.bn_fatLayer = None
         self.bn = [] # batch normalization (all layers except first)

@@ -9,6 +9,10 @@ import torch
 
 
 def create_out_dir(exp_path, exp_name, fold):
+    """
+    This creates a directory exp_path/exp_name/exp_name_fold
+    to save the results
+    """
     dir_name = exp_name + '_fold' + str(fold)
     dir_path = os.path.join(exp_path, exp_name, dir_name)
 
@@ -16,7 +20,6 @@ def create_out_dir(exp_path, exp_name, fold):
     if not os.path.isdir(dir_path):
         try:
             Path(dir_path).mkdir(parents=True, exist_ok=True)
-            #os.mkdir(dir_path)
         except OSError:
             print('Creation of directory %s failed' % dir_path)
             sys.exit(1)
@@ -30,12 +33,15 @@ def create_out_dir(exp_path, exp_name, fold):
     return dir_path
 
 
-def save_exp_params(out_dir, args):
+def save_exp_params(config):
+    """
+    Creates the file exp_params.log where experiment
+    configurations will be saved for reproducibility
+    """
     filename = 'exp_params.log'
-    d = vars(args)
 
-    with open(os.path.join(out_dir, filename), 'w') as f:
-        for k,v in d.items():
+    with open(os.path.join(config['out_dir'], filename), 'w') as f:
+        for k,v in config.items():
             f.write(k + ':' + str(v) + '\n')
 
 
