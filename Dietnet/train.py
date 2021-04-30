@@ -89,6 +89,7 @@ def my_train(config, checkpoint_dir=None):
             torch.from_numpy(y_valid), torch.from_numpy(y_test)
 
     # Put data on GPU
+    """
     x_train, x_valid, x_test = x_train.to(device), x_valid.to(device), \
             x_test.to(device)
     x_train, x_valid, x_test = x_train.float(), x_valid.float(), \
@@ -96,7 +97,7 @@ def my_train(config, checkpoint_dir=None):
 
     y_train, y_valid, y_test = y_train.to(device), y_valid.to(device), \
             y_test.to(device)
-
+    """
     # Compute mean and sd of training set for normalization
     mus, sigmas = du.compute_norm_values(x_train)
 
@@ -191,7 +192,7 @@ def my_train(config, checkpoint_dir=None):
     discrim_model = mlu.create_disc_model(comb_model, emb, device)
 
     # Monitoring: validation baseline
-    min_loss, best_acc = mlu.eval_step(valid_generator, len(valid_set),
+    min_loss, best_acc = mlu.eval_step(device, valid_generator, len(valid_set),
                                        discrim_model, criterion)
     print('baseline loss:',min_loss, 'baseline acc:', best_acc)
 
@@ -216,6 +217,8 @@ def my_train(config, checkpoint_dir=None):
         train_minibatch_n_right = [] #nb of good classifications
 
         for x_batch, y_batch, _ in train_generator:
+            x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+            x_batch.float()
             optimizer.zero_grad()
 
             # Forward pass
@@ -251,7 +254,7 @@ def my_train(config, checkpoint_dir=None):
 
         # ---Validation---
         comb_model = comb_model.eval()
-        epoch_loss, epoch_acc = mlu.eval_step(valid_generator, len(valid_set),
+        epoch_loss, epoch_acc = mlu.eval_step(device, valid_generator, len(valid_set),
                                               discrim_model, criterion)
 
         valid_losses.append(epoch_loss)
@@ -304,7 +307,7 @@ def my_train(config, checkpoint_dir=None):
                                    input_dropout=config['input_dropout'])
 
     comb_model = comb_model.eval()
-    score, pred, acc = mlu.test(test_generator, len(test_set), discrim_model)
+    score, pred, acc = mlu.test(device, test_generator, len(test_set), discrim_model)
 
     print('Final accuracy:', str(acc))
     print('total running time:', str(total_time))

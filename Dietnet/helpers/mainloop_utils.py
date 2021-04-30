@@ -7,11 +7,13 @@ import torch.nn as nn
 from helpers import model
 
 
-def eval_step(valid_generator, set_size, discrim_model, criterion):
+def eval_step(device, valid_generator, set_size, discrim_model, criterion):
     valid_minibatch_mean_losses = []
     valid_minibatch_n_right = [] # nb of good classifications
 
     for x_batch, y_batch, _ in valid_generator:
+        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+        x_batch, y_batch = x_batch.float()
         # Forward pass
         discrim_model_out = discrim_model(x_batch)
 
@@ -55,10 +57,12 @@ def has_improved(best_acc, actual_acc, min_loss, actual_loss):
     return False
 
 
-def test(test_generator, set_size, discrim_model):
+def test(device, test_generator, set_size, discrim_model):
     test_minibatch_n_right = [] # nb of good classifications in a minibatch
 
     for i, (x_batch, y_batch, samples) in enumerate(test_generator):
+        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+        x_batch - x_batch.float()
         # Forward pass
         discrim_model_out = discrim_model(x_batch)
 
