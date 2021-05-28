@@ -4,6 +4,8 @@ import time
 import yaml
 import pprint
 
+import h5py
+
 import numpy as np
 
 import torch
@@ -38,6 +40,7 @@ def main():
     config['folds_indexes'] = args.folds_indexes
     config['dataset'] = args.dataset
     config['embedding'] = args.embedding
+    config['preprocess_params'] = args.preprocess_params
     config['fold'] = args.which_fold
     config['param_init'] = args.param_init
 
@@ -52,7 +55,8 @@ def main():
                         config=config,
                         resources_per_trial={"gpu":1},
                         local_dir=os.path.join(config['exp_path'],config['exp_name']),
-                        name='ray_results')
+                        name='ray_results',
+                        verbose=0)
 
 
 @wandb_mixin
@@ -73,6 +77,7 @@ def my_train(config, checkpoint_dir=None):
         torch.cuda.manual_seed_all(seed)
 
     # Get fold data (indexes and samples are np arrays, x,y are tensors)
+    """
     data = du.load_data(os.path.join(config['exp_path'], config['dataset']))
     folds_indexes = du.load_folds_indexes(
             os.path.join(config['exp_path'], config['folds_indexes']))
@@ -81,13 +86,14 @@ def my_train(config, checkpoint_dir=None):
      x_valid, y_valid, samples_valid,
      x_test, y_test, samples_test) = du.get_fold_data(config['fold'],
                                         folds_indexes, data)
-
+    """
     # Convert np array to torch tensors
+    """
     x_train, x_valid, x_test = torch.from_numpy(x_train), \
             torch.from_numpy(x_valid), torch.from_numpy(x_test)
     y_train, y_valid, y_test = torch.from_numpy(y_train), \
             torch.from_numpy(y_valid), torch.from_numpy(y_test)
-
+    """
     # Put data on GPU
     """
     x_train, x_valid, x_test = x_train.to(device), x_valid.to(device), \
@@ -99,24 +105,50 @@ def my_train(config, checkpoint_dir=None):
             y_test.to(device)
     """
     # Compute mean and sd of training set for normalization
-    mus, sigmas = du.compute_norm_values(x_train)
+    #mus, sigmas = du.compute_norm_values(x_train)
+
+    # Load mean and sd of training set for normalization
+    print('loading preprocessing parameters')
+    preprocess_params = np.load(os.path.join(config['exp_path'],config['preprocess_params']))
+    mus = preprocess_params['means_by_fold'][config['fold']]
+    sigmas = preprocess_params['sd_by_fold'][config['fold']]
+    mus = torch.from_numpy(mus).float().to(device)
+    sigmas = torch.from_numpy(sigmas).float().to(device)
 
     # Replace missing values
+    """
     du.replace_missing_values(x_train, mus)
     du.replace_missing_values(x_valid, mus)
     du.replace_missing_values(x_test, mus)
+    """
 
     # Normalize
+    """
     x_train_normed = du.normalize(x_train, mus, sigmas)
     x_valid_normed = du.normalize(x_valid, mus, sigmas)
     x_test_normed = du.normalize(x_test, mus, sigmas)
+    """
 
     # Make fold final dataset
+    """
     train_set = du.FoldDataset(x_train_normed, y_train, samples_train)
     valid_set = du.FoldDataset(x_valid_normed, y_valid, samples_valid)
     test_set = du.FoldDataset(x_test_normed, y_test, samples_test)
+    """
+    print('Making fold dataset')
+    fold_idx_f = np.load(os.path.join(config['exp_path'], config['folds_indexes']), allow_pickle=True)
+    fold_idx = fold_idx_f['folds_indexes'][config['fold']]
+    data_f = os.path.join(config['exp_path'], config['dataset'])
+
+    print('Training set')
+    train_set = du.FoldDataset(fold_idx[0], data_f)
+    print('Validation set')
+    valid_set = du.FoldDataset(fold_idx[1], data_f)
+    print('Test set')
+    test_set = du.FoldDataset(fold_idx[2], data_f)
 
     # Load embedding
+    print('Loading embedding')
     emb = du.load_embedding(os.path.join(config['exp_path'], config['embedding']),
                             config['fold'])
     emb = emb.to(device)
@@ -137,13 +169,18 @@ def my_train(config, checkpoint_dir=None):
     n_feats = emb.size()[0] # input of main net
 
     # Get main net output size (nb targets)
+    """
     n_targets = max(torch.max(train_set.ys).item(),
                     torch.max(valid_set.ys).item(),
                     torch.max(test_set.ys).item()) + 1 #0-based encoding
+    """
+    with h5py.File(data_f, 'r') as f:
+        n_targets = len(f['label_names'])
 
     print('\n***Nb features in models***')
     print('n_feats_emb:', n_feats_emb)
     print('n_feats:', n_feats)
+    print('n_targets:', n_targets)
 
     print('Model init')
 
@@ -171,13 +208,15 @@ def my_train(config, checkpoint_dir=None):
 
     # Minibatch generators
     train_generator = DataLoader(train_set,
-                                 batch_size=batch_size)
+                                 batch_size=batch_size, num_workers=0)
     valid_generator = DataLoader(valid_set,
                                  batch_size=batch_size,
-                                 shuffle=False)
+                                 shuffle=False,
+                                 num_workers=0)
     test_generator = DataLoader(test_set,
                                 batch_size=batch_size,
-                                shuffle=False)
+                                shuffle=False,
+                                num_workers=0)
 
     # Save model summary
     lu.save_model_summary(config['out_dir'], comb_model, criterion, optimizer)
@@ -193,7 +232,7 @@ def my_train(config, checkpoint_dir=None):
 
     # Monitoring: validation baseline
     min_loss, best_acc = mlu.eval_step(device, valid_generator, len(valid_set),
-                                       discrim_model, criterion)
+                                       discrim_model, criterion, mus, sigmas)
     print('baseline loss:',min_loss, 'baseline acc:', best_acc)
 
     # Monitoring: Nb epoch without improvement after which to stop training
@@ -216,9 +255,15 @@ def my_train(config, checkpoint_dir=None):
         train_minibatch_mean_losses = []
         train_minibatch_n_right = [] #nb of good classifications
 
+        b = 0
         for x_batch, y_batch, _ in train_generator:
             x_batch, y_batch = x_batch.to(device), y_batch.to(device)
             x_batch.float()
+            # Replace missing values
+            du.replace_missing_values(x_batch, mus)
+            # Normalize
+            x_batch = du.normalize(x_batch, mus, sigmas)
+
             optimizer.zero_grad()
 
             # Forward pass
@@ -239,6 +284,9 @@ def my_train(config, checkpoint_dir=None):
             train_minibatch_mean_losses.append(loss.item())
             train_minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
 
+            b += len(y_batch)
+            print('completed batch', b, 'samples passed')
+
         # Monitoring: Epoch
         epoch_loss = np.array(train_minibatch_mean_losses).mean()
         train_losses.append(epoch_loss)
@@ -255,7 +303,7 @@ def my_train(config, checkpoint_dir=None):
         # ---Validation---
         comb_model = comb_model.eval()
         epoch_loss, epoch_acc = mlu.eval_step(device, valid_generator, len(valid_set),
-                                              discrim_model, criterion)
+                                              discrim_model, criterion, mus, sigmas)
 
         valid_losses.append(epoch_loss)
         valid_acc.append(epoch_acc)
@@ -307,11 +355,13 @@ def my_train(config, checkpoint_dir=None):
                                    input_dropout=config['input_dropout'])
 
     comb_model = comb_model.eval()
-    score, pred, acc = mlu.test(device, test_generator, len(test_set), discrim_model)
+    score, pred, acc = mlu.test(device, test_generator, len(test_set), discrim_model, mus, sigmas)
 
     print('Final accuracy:', str(acc))
     print('total running time:', str(total_time))
 
+    ## TO DO
+    """
     # Save results
     lu.save_results(config['out_dir'],
                     test_set.samples,
@@ -327,7 +377,7 @@ def my_train(config, checkpoint_dir=None):
                             pred, score,
                             data['label_names'], data['snp_names'],
                             mus, sigmas)
-
+    """
 def parse_args():
     parser = argparse.ArgumentParser(
             description=('Preprocess features for main network '
@@ -360,7 +410,7 @@ def parse_args():
     parser.add_argument(
             '--dataset',
             type=str,
-            default='dataset.npz',
+            default='dataset.hdf5',
             help=('Filename of dataset returned by create_dataset.py '
                   'The file must be in direcotry specified with exp-path '
                   'Default: %(default)s')
@@ -382,6 +432,13 @@ def parse_args():
         help=('Filename of embedding returned by generate_embedding.py '
               'The file must be in directory specified with exp-path. '
               'Default: %(default)s')
+        )
+
+    parser.add_argument(
+        '--preprocess-params',
+        type=str,
+        default='preprocessing_params.npz',
+        help='Normalization parameters obtained with get_preprocessing_params.py'
         )
 
     parser.add_argument(

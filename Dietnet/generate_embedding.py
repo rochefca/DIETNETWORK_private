@@ -3,6 +3,8 @@ import os
 
 import numpy as np
 
+import h5py
+
 import helpers.dataset_utils as du
 
 
@@ -13,10 +15,17 @@ def generate_embedding():
     args = parse_args()
 
     # Load data
+    """
     data = np.load(os.path.join(args.exp_path,args.dataset))
     folds_indexes = du.load_folds_indexes(
             os.path.join(args.exp_path,args.folds_indexes)
             )
+    """
+    data = h5py.File(os.path.join(args.exp_path,args.dataset))
+    folds_indexes = du.load_folds_indexes(
+            os.path.join(args.exp_path,args.folds_indexes)
+            )
+
 
     embedding_by_fold = []
     for fold in range(len(folds_indexes)):
@@ -47,9 +56,11 @@ def generate_embedding():
         emb = compute_fold_embedding(x, y)
         embedding_by_fold.append(emb)
 
+    data.close()
+
     # Save
     embedding_by_fold = np.array(embedding_by_fold)
-    print('Saving embedding to', args.exp_path)
+    print('Saving embedding to', os.path.join(args.exp_path,args.out))
     np.savez(os.path.join(args.exp_path,args.out), emb=embedding_by_fold)
 
 
@@ -107,7 +118,7 @@ def parse_args():
     parser.add_argument(
             '--dataset',
             type=str,
-            default='dataset.npz',
+            default='dataset.hdf5',
             help=('Filename of dataset returned by create_dataset.py '
                   'The file must be in directory specidifed with exp-path. '
                   'Default: %(default)s')

@@ -1,11 +1,14 @@
 """
-Script to parse data into a npz format and partition data into folds
-Creates dataset.npz and folds_indexes.npz (default filenames)
+Script to parse data into a hdf5 format
+Creates dataset.hdf5 (default filename)
 """
 import argparse
 import os
+import multiprocessing as mp
 
 import numpy as np
+
+import h5py
 
 import helpers.dataset_utils as du
 
@@ -13,30 +16,78 @@ import helpers.dataset_utils as du
 def create_dataset():
     args = parse_args()
 
-    print('Loading data')
-    # Load samples, snp names and genotype values
-    samples, snps, genotypes = du.load_genotypes(args.genotypes)
+    # Load data
+    if args.parallel_loading:
+        # Multiprocessing to load lines in parallel
+        ncpus = int(os.environ.get('SLURM_CPUS_PER_TASK',default=1))
+        print('Loading data in parallel using', ncpus, 'processes')
+        pool = mp.Pool(processes=ncpus)
+
+        # Results returned by processes
+        # (samples will be shuffled  because of parallel processes)
+        results = []
+
+        # Every line is read by a different process
+        with open(args.genotypes, 'r') as f:
+            header_line = next(f)
+            for line in f:
+                # Add sample, sample's genotype accros all SNPs
+                results.append(pool.apply_async(du.load_genotypes_parallel, args=(line,)))
+
+        # Get samples and genotypes from multiprocess results
+        print('Parsed genotypes, getting the results')
+        results_values = [p.get() for p in results]
+        samples = np.array([i[0] for i in results_values])
+        genotypes = np.array([i[1] for i in results_values])
+        print('Loaded', genotypes.shape[0], 'samples with', genotypes.shape[1], 'genotypes')
+
+        # Get snps names from header line
+        print('Loading snps names')
+        snps = np.array([i.strip() for i in header_line.split('\t')[1:]], dtype='S')
+        print('Loaded', len(snps), 'snps')
+
+    else:
+        print('Loading data')
+        # Load samples, snp names and genotype values
+        samples, snps, genotypes = du.load_genotypes(args.genotypes)
 
     # Load samples with their labels
+    print('Loading labels')
     samples_in_labels, labels = du.load_labels(args.labels)
 
-    # Ensure given samples are in same order in genotypes and labels files
+    # Order labels to match samples order obtained from genotypes file
+    print('Ordering labels to match genotypes order, based on samples ids')
     ordered_labels = du.order_labels(samples, samples_in_labels, labels)
+
 
     # If labels are categories, encode labels as numbers
     if args.prediction == 'classification' :
         label_names, encoded_labels = numeric_encode_labels(ordered_labels)
 
         # Save dataset to file
-        print('Saving dataset and fold indexes to', args.exp_path)
+        print('Saving dataset to', os.path.join(args.exp_path,args.data_out))
+        f = h5py.File(os.path.join(args.exp_path,args.data_out), 'w')
+        f.create_dataset('inputs', data=genotypes)
+        snps = snps.astype('S') # hdf5 doesn't support np UTF-8 encoding
+        f.create_dataset('snp_names', data=snps)
+        f.create_dataset('labels', data=encoded_labels)
+        label_names = label_names.astype('S')
+        f.create_dataset('label_names', data=label_names)
+        samples = samples.astype('S')
+        f.create_dataset('samples', data=samples)
+        f.close()
+
+        """
         np.savez(os.path.join(args.exp_path,args.data_out),
                  inputs=genotypes,
                  snp_names=snps,
                  labels=encoded_labels,
                  label_names=label_names,
                  samples=samples)
+        """
 
     # If labels are not categories
+    """
     else:
         print('Saving dataset and fold indexes to', args.exp_path)
         np.savez(os.path.join(args.exp_path, args.data_out),
@@ -44,8 +95,10 @@ def create_dataset():
                  snp_names=snp_names,
                  labels=ordered_labels,
                  samples=samples)
+    """
 
     # Partition data into fold (using indexes of the numpy arrays)
+    """
     indices = np.arange(len(samples))
     partition = du.partition(indices,
                              args.nb_folds,
@@ -54,7 +107,7 @@ def create_dataset():
     np.savez(os.path.join(args.exp_path,args.fold_out),
              folds_indexes=np.array(partition,dtype=object),
              seed=np.array([args.seed]))
-
+    """
 
 def _load_labels(filename):
     with open(filename, 'r') as f:
@@ -118,6 +171,12 @@ def parse_args():
             )
 
     parser.add_argument(
+            '--parallel-loading',
+            action='store_true',
+            help='Use this flag to load samples in parallel'
+            )
+
+    parser.add_argument(
             '--labels',
             type=str,
             required=True,
@@ -163,7 +222,7 @@ def parse_args():
 
     parser.add_argument(
             '--data-out',
-            default='dataset.npz',
+            default='dataset.hdf5',
             help='Filename for the returned dataset. Default: %(default)s'
             )
 
