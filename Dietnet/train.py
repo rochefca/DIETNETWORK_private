@@ -27,7 +27,7 @@ def main():
     args = parse_args()
 
     # Load config
-    f = open(args.config)
+    f = open(os.path.join(args.exp_path, args.exp_name,args.config))
     config = yaml.load(f, Loader=yaml.FullLoader)
 
     # Create directory where results an exp info will be saved (exp_path/exp_name/fold)
