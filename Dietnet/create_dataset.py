@@ -19,7 +19,8 @@ def create_dataset():
     # Load data
     if args.parallel_loading:
         # Multiprocessing to load lines in parallel
-        ncpus = int(os.environ.get('SLURM_CPUS_PER_TASK',default=1))
+        #ncpus = int(os.environ.get('SLURM_CPUS_PER_TASK',default=1))
+        ncpus = args.ncpus
         print('Loading data in parallel using', ncpus, 'processes')
         pool = mp.Pool(processes=ncpus)
 
@@ -65,8 +66,8 @@ def create_dataset():
         label_names, encoded_labels = numeric_encode_labels(ordered_labels)
 
         # Save dataset to file
-        print('Saving dataset to', os.path.join(args.exp_path,args.data_out))
-        f = h5py.File(os.path.join(args.exp_path,args.data_out), 'w')
+        print('Saving dataset to', os.path.join(args.exp_path,args.out))
+        f = h5py.File(os.path.join(args.exp_path,args.out), 'w')
         f.create_dataset('inputs', data=genotypes)
         snps = snps.astype('S') # hdf5 doesn't support np UTF-8 encoding
         f.create_dataset('snp_names', data=snps)
@@ -177,6 +178,12 @@ def parse_args():
             )
 
     parser.add_argument(
+            '--ncpus',
+            type=int,
+            help='Number of cpus for parallel loading'
+            )
+
+    parser.add_argument(
             '--labels',
             type=str,
             required=True,
@@ -195,6 +202,7 @@ def parse_args():
                   'Default: %(default)s')
             )
 
+    """
     parser.add_argument(
             '--nb-folds',
             type=int,
@@ -219,20 +227,22 @@ def parse_args():
                   'before partitioning into folds. '
                   'Default: %(default)i')
             )
+    """
 
     parser.add_argument(
-            '--data-out',
+            '--out',
             default='dataset.hdf5',
             help='Filename for the returned dataset. Default: %(default)s'
             )
 
+    """
     parser.add_argument(
             '--fold-out',
             default='folds_indexes.npz',
             help=('Filename for returned samples indexes of each fold. '
                   'Default: %(default)s')
             )
-
+    """
     return parser.parse_args()
 
 
