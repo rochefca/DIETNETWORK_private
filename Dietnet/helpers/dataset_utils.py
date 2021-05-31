@@ -16,7 +16,7 @@ class FoldDataset(torch.utils.data.Dataset):
         """
         self.dataset_file = dataset_file
         self.set_indexes = set_indexes
-        self.dataset = None
+        #self.dataset = None
 
     def __len__(self):
         return len(self.set_indexes)
@@ -27,13 +27,14 @@ class FoldDataset(torch.utils.data.Dataset):
         y = self.ys[index]
         sample = self.samples[index]
         """
-        # Data of all sets is in one file, convert the index to match file index
+        # Data of all sets (train, valid, test) is in one file
+        # so we convert the index to match file index
         file_index = self.set_indexes[index]
-        """
+
         with h5py.File(self.dataset_file, 'r') as data:
             x = np.array(data['inputs'][file_index], dtype=np.int8)
-            y = np.array(data['labels'][file_index])
-            sample = np.array(data['samples'][file_index], dtype=np.int)
+            y = (data['labels'][file_index]).astype(np.int)
+            sample = (data['samples'][file_index]).astype(np.str_)
 
         return x, y, sample
         """
@@ -43,6 +44,8 @@ class FoldDataset(torch.utils.data.Dataset):
         return np.array(self.dataset['inputs'][file_index], dtype=np.int8), \
                np.array(self.dataset['labels'][file_index]), \
                np.array(self.dataset['samples'][file_index], dtype=np.int)
+        """
+
 
 def shuffle(indices, seed=None):
     # Fix seed so shuffle is always the same
