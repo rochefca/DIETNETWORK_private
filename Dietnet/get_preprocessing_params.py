@@ -36,8 +36,6 @@ def get_preprocessing_params():
         means_by_fold.append(means.numpy())
         sd_by_fold.append(sd.numpy())
 
-        break
-
     data.close()
 
     # Save
