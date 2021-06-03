@@ -175,6 +175,8 @@ def my_train(config, checkpoint_dir=None):
                     torch.max(test_set.ys).item()) + 1 #0-based encoding
     """
     with h5py.File(data_f, 'r') as f:
+        label_names = np.array(f['label_names'])
+        snp_names = np.array(f['snp_names'])
         n_targets = len(f['label_names'])
 
     print('\n***Nb features in models***')
@@ -255,7 +257,7 @@ def my_train(config, checkpoint_dir=None):
         train_minibatch_mean_losses = []
         train_minibatch_n_right = [] #nb of good classifications
 
-        b = 0
+        #b = 0
         for x_batch, y_batch, _ in train_generator:
             x_batch, y_batch = x_batch.to(device), y_batch.to(device)
             x_batch.float()
@@ -284,8 +286,8 @@ def my_train(config, checkpoint_dir=None):
             train_minibatch_mean_losses.append(loss.item())
             train_minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
 
-            b += len(y_batch)
-            print('completed batch', b, 'samples passed')
+            #b += len(y_batch)
+            #print('completed batch', b, 'samples passed')
 
         # Monitoring: Epoch
         epoch_loss = np.array(train_minibatch_mean_losses).mean()
@@ -355,12 +357,21 @@ def my_train(config, checkpoint_dir=None):
                                    input_dropout=config['input_dropout'])
 
     comb_model = comb_model.eval()
-    score, pred, acc = mlu.test(device, test_generator, len(test_set), discrim_model, mus, sigmas)
+    score, pred, acc, test_ys, test_samples = mlu.test(device, test_generator, len(test_set), discrim_model, mus, sigmas)
 
     print('Final accuracy:', str(acc))
     print('total running time:', str(total_time))
 
-    ## TO DO
+    # Save results
+    lu.save_results(config['out_dir'], test_samples, test_ys, label_names,score,pred,n_epochs)
+
+    # Save additional data
+    print('Saving additional data')
+    train_samples = train_set.get_samples()
+    valid_samples = valid_set.get_samples()
+
+    lu.save_additional_data(config['out_dir'], train_samples, valid_samples, test_samples, test_ys, pred, score, label_names, snp_names, mus, sigmas)
+
     """
     # Save results
     lu.save_results(config['out_dir'],

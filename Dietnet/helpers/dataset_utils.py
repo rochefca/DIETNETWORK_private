@@ -46,6 +46,13 @@ class FoldDataset(torch.utils.data.Dataset):
                np.array(self.dataset['samples'][file_index], dtype=np.int)
         """
 
+    def get_samples(self):
+        with h5py.File(self.dataset_file, 'r') as data:
+            set_indexes = np.sort(self.set_indexes)
+            samples = np.array(data['samples'][set_indexes]).astype(np.str_)
+
+        return samples
+
 
 def shuffle(indices, seed=None):
     # Fix seed so shuffle is always the same

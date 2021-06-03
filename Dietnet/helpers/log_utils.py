@@ -104,10 +104,10 @@ def save_results(out_dir, samples, labels, label_names, score, pred, n_epochs):
 
     np.savez(os.path.join(out_dir, filename),
              test_samples=samples,
-             test_labels=labels.cpu(),
+             test_labels=labels,
              test_scores=score.cpu(),
              test_preds=pred.cpu(),
-             label_names=label_names,
+             label_names=np.array(label_names),
              n_epochs=n_epochs)
 
 
@@ -124,7 +124,7 @@ def save_additional_data(out_dir,
              sample_ids_train=train_samples,
              sample_ids_valid=valid_samples,
              sample_ids_test=test_samples,
-             test_labels=test_labels.cpu(),
+             test_labels=test_labels,
              test_preds=pred.cpu(),
              test_scores=score.cpu(),
              label_names=label_names,

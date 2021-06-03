@@ -12,7 +12,7 @@ def eval_step(device, valid_generator, set_size, discrim_model, criterion, mus, 
     valid_minibatch_mean_losses = []
     valid_minibatch_n_right = [] # nb of good classifications
 
-    b = 0
+    #b = 0
     for x_batch, y_batch, _ in valid_generator:
         x_batch, y_batch = x_batch.to(device), y_batch.to(device)
         x_batch = x_batch.float()
@@ -36,8 +36,8 @@ def eval_step(device, valid_generator, set_size, discrim_model, criterion, mus, 
         valid_minibatch_mean_losses.append(weighted_loss)
         valid_minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
 
-        b += len(y_batch)
-        print('completed batch', b, 'samples passed')
+        #b += len(y_batch)
+        #print('completed batch', b, 'samples passed')
 
     valid_loss = np.array(valid_minibatch_mean_losses).sum()/set_size
     valid_acc = compute_accuracy(valid_minibatch_n_right, set_size)
@@ -70,8 +70,12 @@ def has_improved(best_acc, actual_acc, min_loss, actual_loss):
 
 def test(device, test_generator, set_size, discrim_model, mus, sigmas):
     test_minibatch_n_right = [] # nb of good classifications in a minibatch
+    test_ys = []
+    test_samples = []
 
     for i, (x_batch, y_batch, samples) in enumerate(test_generator):
+        test_ys = np.concatenate((test_ys, y_batch))
+        test_samples = np.concatenate((test_samples, samples))
         x_batch, y_batch = x_batch.to(device), y_batch.to(device)
         x_batch = x_batch.float()
 
@@ -98,7 +102,7 @@ def test(device, test_generator, set_size, discrim_model, mus, sigmas):
     # Total accuracy
     test_acc = compute_accuracy(test_minibatch_n_right, set_size)
 
-    return test_score, test_pred, test_acc
+    return test_score, test_pred, test_acc, test_ys, test_samples
 
 
 def create_disc_model(comb_model, emb, device):
