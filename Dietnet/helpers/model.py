@@ -242,7 +242,6 @@ if __name__ == '__main__':
     # Intantiate models
     emb_model = Feat_emb_net(n_feats=x_emb.size()[1], n_hidden_u=100)
     emb_model_out = emb_model(x_emb)
-    print(emb_model_out.size())
     fatLayer_weights = torch.transpose(emb_model_out,1,0)
     discrim_model = Discrim_net(fatLayer_weights=fatLayer_weights,
                                 n_feats=x.size()[1],

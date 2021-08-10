@@ -22,7 +22,7 @@ def create_dataset():
         #ncpus = int(os.environ.get('SLURM_CPUS_PER_TASK',default=1))
         ncpus = args.ncpus
         print('Loading data in parallel using', ncpus, 'processes')
-        pool = mp.Pool(processes=ncpus)
+        pool = mp.Pool(processes=ncpus) #this starts 4 worker processes
 
         # Results returned by processes
         # (samples will be shuffled  because of parallel processes)

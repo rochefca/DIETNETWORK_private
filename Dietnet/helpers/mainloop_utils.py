@@ -8,41 +8,129 @@ from helpers import model
 from helpers import dataset_utils as du
 
 
-def eval_step(device, valid_generator, set_size, discrim_model, criterion, mus, sigmas):
-    valid_minibatch_mean_losses = []
-    valid_minibatch_n_right = [] # nb of good classifications
+def train_step(comb_model, device, optimizer, train_generator, set_size,
+               criterion, mus, sigmas, emb):
+    # Monitoring : Minibatch setup
+    minibatch_loss = []
+    minibatch_n_right = [] # nb of good classifications
 
-    b = 0
+    for x_batch, y_batch, _ in train_generator:
+        # Send data to device
+        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+        x_batch.float()
+
+        # Replace missing values
+        du.replace_missing_values(x_batch, mus)
+
+        # Normalize
+        x_batch = du.normalize(x_batch, mus, sigmas)
+
+        # Reset optimizer
+        optimizer.zero_grad()
+
+        # Forward pass
+        comb_model_out = comb_model(emb, x_batch)
+
+        # Get prediction (do softmax computation for classification)
+        _, pred = get_predictions(comb_model_out)
+
+        # Compute loss (softmax computation included in the loss)
+        loss = criterion(comb_model_out, y_batch)
+
+        # Compute gradients
+        loss.backward()
+
+        # Optimize
+        optimizer.step()
+
+        # Monitoring : Minibatch
+        minibatch_loss.append(loss.item()) # mean loss of the minibatch
+        minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
+
+    # Monitoring: Epoch
+    epoch_loss = np.array(minibatch_loss).mean()
+    epoch_acc = np.array(minibatch_n_right).sum() / float(set_size)*100
+
+    return epoch_loss, epoch_acc
+
+
+def eval_step(comb_model, device, valid_generator, set_size,
+              criterion, mus, sigmas, emb):
+    # Monitoring: Minibatch setup
+    minibatch_loss = []
+    minibatch_n_right = [] # nb of good classifications
+
     for x_batch, y_batch, _ in valid_generator:
+        # Send data to device
         x_batch, y_batch = x_batch.to(device), y_batch.to(device)
         x_batch = x_batch.float()
 
         # Replace missing values
         du.replace_missing_values(x_batch, mus)
+
         # Normalize
         x_batch = du.normalize(x_batch, mus, sigmas)
 
         # Forward pass
-        discrim_model_out = discrim_model(x_batch)
+        comb_model_out = comb_model(emb, x_batch)
 
         # Predictions
-        _, pred = get_predictions(discrim_model_out)
+        _, pred = get_predictions(comb_model_out)
 
         # Loss
-        loss = criterion(discrim_model_out, y_batch)
+        loss = criterion(comb_model_out, y_batch)
 
-        # Minibatch monitoring
+        # Monitoring : Minibatch
         weighted_loss = loss.item()*len(y_batch) # for unequal minibatches
-        valid_minibatch_mean_losses.append(weighted_loss)
-        valid_minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
+        minibatch_loss.append(weighted_loss)
+        minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
 
-        b += len(y_batch)
-        print('completed batch', b, 'samples passed')
+    epoch_loss = np.array(minibatch_loss).sum()/set_size
+    epoch_acc = np.array(minibatch_n_right).sum() / float(set_size)*100
 
-    valid_loss = np.array(valid_minibatch_mean_losses).sum()/set_size
-    valid_acc = compute_accuracy(valid_minibatch_n_right, set_size)
+    return epoch_loss, epoch_acc
 
-    return valid_loss, valid_acc
+
+def test_step(comb_model, device, test_generator, set_size,
+              mus, sigmas, emb):
+    # Saving data seen while looping through minibatches
+    minibatch_n_right = [] #number of good classifications
+    test_pred = torch.tensor([]).to(device) #prediction of each sample
+    test_score = torch.tensor([]).to(device) #softmax values of each sample
+    test_samples = np.array([]) #test samples
+    test_ys = np.array([]) #true labels of test samples
+
+    for i, (x_batch, y_batch, samples) in enumerate(test_generator):
+        # Save samples
+        test_samples = np.concatenate([test_samples, samples])
+        # Save labels
+        test_ys = np.concatenate([test_ys, y_batch])
+
+        # Send data to device
+        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+        x_batch = x_batch.float()
+
+        # Replace missing values
+        du.replace_missing_values(x_batch, mus)
+
+        # Normalize
+        x_batch = du.normalize(x_batch, mus, sigmas)
+
+        # Forward pass
+        comb_model_out = comb_model(emb, x_batch)
+
+        # Predictions
+        score, pred = get_predictions(comb_model_out)
+        test_pred = torch.cat((test_pred,pred), dim=-1)
+        test_score = torch.cat((test_score,score), dim=0)
+
+        # Nb of good classifications for the minibatch
+        minibatch_n_right.append(((y_batch - pred) == 0).sum().item())
+
+    # Total accuracy
+    test_acc = np.array(minibatch_n_right).sum() / float(set_size)*100
+
+    return test_samples, test_ys, test_score, test_pred, test_acc
 
 
 def get_predictions(model_output):
@@ -53,12 +141,6 @@ def get_predictions(model_output):
     return score, pred
 
 
-def compute_accuracy(n_right, set_size):
-    acc = np.array(n_right).sum() / float(set_size)*100
-
-    return acc
-
-
 def has_improved(best_acc, actual_acc, min_loss, actual_loss):
     if actual_acc > best_acc:
         return True
@@ -66,39 +148,6 @@ def has_improved(best_acc, actual_acc, min_loss, actual_loss):
         return True
 
     return False
-
-
-def test(device, test_generator, set_size, discrim_model, mus, sigmas):
-    test_minibatch_n_right = [] # nb of good classifications in a minibatch
-
-    for i, (x_batch, y_batch, samples) in enumerate(test_generator):
-        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
-        x_batch = x_batch.float()
-
-        # Replace missing values
-        du.replace_missing_values(x_batch, mus)
-        # Normalize
-        x_batch = du.normalize(x_batch, mus, sigmas)
-
-        # Forward pass
-        discrim_model_out = discrim_model(x_batch)
-
-        # Predictions
-        score, pred = get_predictions(discrim_model_out)
-        if i == 0:
-            test_pred = pred
-            test_score = score
-        else:
-            test_pred = torch.cat((test_pred,pred), dim=-1)
-            test_score = torch.cat((test_score,score), dim=0)
-
-        # Nb of good classifications for the minibatch
-        test_minibatch_n_right.append(((y_batch - pred) == 0).sum().item())
-
-    # Total accuracy
-    test_acc = compute_accuracy(test_minibatch_n_right, set_size)
-
-    return test_score, test_pred, test_acc
 
 
 def create_disc_model(comb_model, emb, device):

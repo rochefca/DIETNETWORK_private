@@ -8,34 +8,26 @@ import torch
 
 
 class FoldDataset(torch.utils.data.Dataset):
-    def __init__(self, set_indexes, dataset_file):
-        """
-        self.xs = xs #tensor on gpu
-        self.ys = ys #tensor on gpu
-        self.samples = samples #np array
-        """
-        self.dataset_file = dataset_file
+    dataset_file = None # This is set in train.py
+    def __init__(self, set_indexes):
         self.set_indexes = set_indexes
-        #self.dataset = None
 
     def __len__(self):
         return len(self.set_indexes)
 
     def __getitem__(self, index):
-        """
-        x = self.xs[index]
-        y = self.ys[index]
-        sample = self.samples[index]
-        """
         # Data of all sets (train, valid, test) is in one file
         # so we convert the index to match file index
         file_index = self.set_indexes[index]
-
-        with h5py.File(self.dataset_file, 'r') as data:
-            x = np.array(data['inputs'][file_index], dtype=np.int8)
-            y = (data['labels'][file_index]).astype(np.int)
-            sample = (data['samples'][file_index]).astype(np.str_)
-
+        """
+        with h5py.File(FoldDataset.dataset_file, 'r') as f:
+            x = np.array(f['inputs'][file_index], dtype=np.int8)
+            y = (f['labels'][file_index]).astype(np.int)
+            sample = (f['samples'][file_index]).astype(np.str_)
+        """
+        x = np.array(self.f['inputs'][file_index], dtype=np.int8)
+        y = (self.f['labels'][file_index]).astype(np.int)
+        sample = (self.f['samples'][file_index]).astype(np.str_)
         return x, y, sample
         """
         if self.dataset is None:
@@ -45,6 +37,12 @@ class FoldDataset(torch.utils.data.Dataset):
                np.array(self.dataset['labels'][file_index]), \
                np.array(self.dataset['samples'][file_index], dtype=np.int)
         """
+
+    def get_samples(self):
+        indexes = np.sort(self.set_indexes)
+        samples = (self.f['samples'][indexes]).astype(np.str_)
+
+        return samples
 
 
 def shuffle(indices, seed=None):
