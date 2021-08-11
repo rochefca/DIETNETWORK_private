@@ -34,7 +34,7 @@ def generate_embedding():
         (_,_,_,
          x_train, y_train, _,
          x_valid, y_valid, _,
-         _,_,_) = du.get_fold_data(fold, folds_indexes, data)
+         _,_,_) = du.get_fold_data(fold, folds_indexes, data, args.prediction)
 
         # Embedding on train+valid sets
         if args.include_valid:
@@ -122,6 +122,13 @@ def parse_args():
             help=('Filename of dataset returned by create_dataset.py '
                   'The file must be in directory specidifed with exp-path. '
                   'Default: %(default)s')
+            )
+
+    parser.add_argument(
+            '--prediction',
+            choices=['classification', 'regression'],
+            default='classification',
+            help='Type of prediction'
             )
 
     parser.add_argument(

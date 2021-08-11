@@ -16,7 +16,7 @@ import helpers.dataset_utils as du
 def create_dataset():
     args = parse_args()
 
-    # Load data
+    # Load samples and genotypes
     if args.parallel_loading:
         # Multiprocessing to load lines in parallel
         #ncpus = int(os.environ.get('SLURM_CPUS_PER_TASK',default=1))
@@ -25,7 +25,6 @@ def create_dataset():
         pool = mp.Pool(processes=ncpus) #this starts 4 worker processes
 
         # Results returned by processes
-        # (samples will be shuffled  because of parallel processes)
         results = []
 
         # Every line is read by a different process
@@ -52,7 +51,7 @@ def create_dataset():
         # Load samples, snp names and genotype values
         samples, snps, genotypes = du.load_genotypes(args.genotypes)
 
-    # Load samples with their labels
+    # Load samples and labels
     print('Loading labels')
     samples_in_labels, labels = du.load_labels(args.labels)
 
@@ -60,43 +59,45 @@ def create_dataset():
     print('Ordering labels to match genotypes order, based on samples ids')
     ordered_labels = du.order_labels(samples, samples_in_labels, labels)
 
-
     # If labels are categories, encode labels as numbers
     if args.prediction == 'classification' :
         label_names, encoded_labels = numeric_encode_labels(ordered_labels)
+    # If labels are for regression task
+    elif args.prediction == 'regression':
+        # Convert string to float
+        ordered_labels = ordered_labels.astype('float64')
+        # Get class labels for embedding computation
+        samples_in_emb_labels, emb_labels = du.load_labels(args.emb_labels)
+        ordered_emb_labels=du.order_labels(samples,
+                                           samples_in_emb_labels,
+                                           emb_labels)
+        emb_label_names, encoded_emb_labels = numeric_encode_labels(
+                ordered_emb_labels)
 
-        # Save dataset to file
-        print('Saving dataset to', os.path.join(args.exp_path,args.out))
-        f = h5py.File(os.path.join(args.exp_path,args.out), 'w')
-        f.create_dataset('inputs', data=genotypes)
-        snps = snps.astype('S') # hdf5 doesn't support np UTF-8 encoding
-        f.create_dataset('snp_names', data=snps)
+    # Save dataset to file
+    print('Saving dataset to', os.path.join(args.exp_path,args.out))
+    f = h5py.File(os.path.join(args.exp_path,args.out), 'w')
+    # Input features
+    f.create_dataset('inputs', data=genotypes)
+    snps = snps.astype('S') # hdf5 doesn't support np UTF-8 encoding
+    f.create_dataset('snp_names', data=snps)
+    # Samples
+    samples = samples.astype('S')
+    f.create_dataset('samples', data=samples)
+    # Labels
+    if args.prediction == 'classification':
         f.create_dataset('labels', data=encoded_labels)
         label_names = label_names.astype('S')
         f.create_dataset('label_names', data=label_names)
-        samples = samples.astype('S')
-        f.create_dataset('samples', data=samples)
-        f.close()
 
-        """
-        np.savez(os.path.join(args.exp_path,args.data_out),
-                 inputs=genotypes,
-                 snp_names=snps,
-                 labels=encoded_labels,
-                 label_names=label_names,
-                 samples=samples)
-        """
+    elif args.prediction == 'regression':
+        f.create_dataset('labels', data=ordered_labels)
+        # Labels for embedding computation
+        f.create_dataset('emb_labels', data=encoded_emb_labels)
+        emb_label_names = emb_label_names.astype('S')
+        f.create_dataset('emb_label_names', data=emb_label_names)
 
-    # If labels are not categories
-    """
-    else:
-        print('Saving dataset and fold indexes to', args.exp_path)
-        np.savez(os.path.join(args.exp_path, args.data_out),
-                 inputs=genotypes,
-                 snp_names=snp_names,
-                 labels=ordered_labels,
-                 samples=samples)
-    """
+    f.close()
 
     # Partition data into fold (using indexes of the numpy arrays)
     """
@@ -109,25 +110,6 @@ def create_dataset():
              folds_indexes=np.array(partition,dtype=object),
              seed=np.array([args.seed]))
     """
-
-def _load_labels(filename):
-    with open(filename, 'r') as f:
-        lines = f.readlines()
-
-    mat = np.array([l.strip('\n').split('\t') for l in lines])
-
-    samples = mat[1:,0]
-    labels = mat[1:,1]
-
-    print('Loaded', str(len(labels)),'labels of', str(len(samples)),'samples')
-
-    return samples, labels
-
-
-def _order_labels(samples, samples_in_labels, labels):
-    idx = [np.where(samples_in_labels == s)[0][0] for s in samples]
-
-    return np.array([labels[i] for i in idx])
 
 
 def onehot_encode_labels(labels):
@@ -200,6 +182,14 @@ def parse_args():
                   '(one number per category). '
                   'Regression: Labels are kept the same. '
                   'Default: %(default)s')
+            )
+
+    parser.add_argument(
+            '--emb-labels',
+            help=('Class labels if embedding is computed by class '
+                  'but the task is regression (--labels are not classes) '
+                  'Like the --labels, this must contain one column '
+                  'with individuals ids and the second column the label')
             )
 
     """

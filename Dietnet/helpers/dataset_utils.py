@@ -214,7 +214,13 @@ def load_embedding(filename, which_fold):
     return emb
 
 
-def get_fold_data(which_fold, folds_indexes, data):
+def get_fold_data(which_fold, folds_indexes, data, prediction):
+    # Class labels identifier in hdf5 file (depends on prediction type)
+    if prediction == 'classification':
+        label = 'labels'
+    elif prediction == 'regression':
+        label = 'emb_labels'
+
     # Indices of each set for the fold (0:train, 1:valid, 2:test)
     fold_indexes = folds_indexes[which_fold]
     train_indexes = np.sort(fold_indexes[0]) # sort is a hdf5 requirement
@@ -223,15 +229,15 @@ def get_fold_data(which_fold, folds_indexes, data):
 
     # Get data (x,y,samples) of each set (train, valid, test)
     x_train = data['inputs'][train_indexes]
-    y_train = data['labels'][train_indexes]
+    y_train = data[label][train_indexes]
     samples_train = data['samples'][train_indexes]
 
     x_valid = data['inputs'][valid_indexes]
-    y_valid = data['labels'][valid_indexes]
+    y_valid = data[label][valid_indexes]
     samples_valid = data['samples'][valid_indexes]
 
     x_test = data['inputs'][test_indexes]
-    y_test = data['labels'][test_indexes]
+    y_test = data[label][test_indexes]
     samples_test = data['samples'][test_indexes]
 
     return train_indexes, valid_indexes, test_indexes,\
