@@ -1,5 +1,6 @@
 import argparse
 import os
+import time
 
 import numpy as np
 
@@ -12,24 +13,19 @@ NB_POSSIBLE_GENOTYPES = 3
 
 
 def generate_embedding():
+    start_time = time.time()
     args = parse_args()
 
-    # Load data
-    """
-    data = np.load(os.path.join(args.exp_path,args.dataset))
-    folds_indexes = du.load_folds_indexes(
-            os.path.join(args.exp_path,args.folds_indexes)
-            )
-    """
+    # Data
     data = h5py.File(os.path.join(args.exp_path,args.dataset))
     folds_indexes = du.load_folds_indexes(
-            os.path.join(args.exp_path,args.folds_indexes)
+            os.path.join(args.exp_path,args.partition)
             )
-
 
     embedding_by_fold = []
     for fold in range(len(folds_indexes)):
         print('Computing embedding of fold', str(fold))
+
         # Get fold data (x,y,samples) that are not test data
         (_,_,_,
          x_train, y_train, _,
@@ -62,6 +58,9 @@ def generate_embedding():
     embedding_by_fold = np.array(embedding_by_fold)
     print('Saving embedding to', os.path.join(args.exp_path,args.out))
     np.savez(os.path.join(args.exp_path,args.out), emb=embedding_by_fold)
+
+    end_time = time.time()
+    print('End of execution. Execution time:', end_time-start_time, 'seconds')
 
 
 def compute_fold_embedding(xs, ys):
@@ -132,9 +131,9 @@ def parse_args():
             )
 
     parser.add_argument(
-            '--folds-indexes',
+            '--partition',
             type=str,
-            default='folds_indexes.npz',
+            default='partitioned_idx.npz',
             help=('Filename of folds indexes returned by create_dataset.py '
                   'The file must be in directory specified with exp-path. '
                   'Default: %(default)s')

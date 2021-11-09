@@ -87,8 +87,8 @@ def save_model_summary(out_dir, model, criterion, optimizer):
         f.write(text)
 
 
-def save_model_params(out_dir, model):
-    filename = 'model_params.pt'
+def save_model_params(out_dir, model, filename='model_params.pt'):
+    #filename = 'model_params.pt'
 
     print('Saving model parameters to %s' % os.path.join(out_dir, filename))
 
@@ -103,6 +103,17 @@ def save_results(out_dir, samples, labels, label_names, score, pred):
     np.savez(os.path.join(out_dir, filename),
              test_samples=samples,
              test_labels=labels,
+             test_scores=score,
+             test_preds=pred,
+             label_names=label_names)
+
+
+def save_results_external_dataset(out_dir, samples, label_names,
+        score, pred, test_name):
+    print('Saving model predictions to %s' % os.path.join(out_dir, test_name))
+
+    np.savez(os.path.join(out_dir, test_name),
+             test_samples=samples,
              test_scores=score,
              test_preds=pred,
              label_names=label_names)

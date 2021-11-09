@@ -14,11 +14,13 @@ def partition_data():
     # Load samples
     dataset_file = os.path.join(args.exp_path, args.dataset)
     f = h5py.File(dataset_file, 'r')
-    samples = f['samples']
-    print('Loaded', len(samples), 'samples from', dataset_file)
+    indices = np.arange(len(f['samples']))
+    f.close()
+
+    print('Partitioning indices of', len(indices), 'samples')
 
     # Partition
-    indices = np.arange(len(samples))
+    #indices = np.arange(len(samples))
     partition = du.partition(indices, args.nb_folds,
                              args.train_valid_ratio, args.seed)
 
@@ -75,7 +77,7 @@ def parse_args():
 
     parser.add_argument(
             '--out',
-            default='folds_indexes.npz',
+            default='partitioned_idx.npz',
             help=('Filename for returned samples indexes of each fold. '
                   'Default: %(default)s')
             )

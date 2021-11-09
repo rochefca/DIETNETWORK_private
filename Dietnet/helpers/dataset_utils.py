@@ -8,7 +8,10 @@ import torch
 
 
 class FoldDataset(torch.utils.data.Dataset):
-    dataset_file = None # This is set in train.py
+    # These variables are set in train.py
+    dataset_file = None #path to h5py file
+    label_type = None # Int if classification, float if regression
+
     def __init__(self, set_indexes):
         self.set_indexes = set_indexes
 
@@ -26,7 +29,7 @@ class FoldDataset(torch.utils.data.Dataset):
             sample = (f['samples'][file_index]).astype(np.str_)
         """
         x = np.array(self.f['inputs'][file_index], dtype=np.int8)
-        y = (self.f['labels'][file_index]).astype(np.int)
+        y = (self.f['labels'][file_index]).astype(self.label_type)
         sample = (self.f['samples'][file_index]).astype(np.str_)
         return x, y, sample
         """
@@ -43,6 +46,20 @@ class FoldDataset(torch.utils.data.Dataset):
         samples = (self.f['samples'][indexes]).astype(np.str_)
 
         return samples
+
+
+class ExternalTestDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset_file):
+        self.dataset = h5py.File(dataset_file, 'r')
+
+    def __len__(self):
+        return len(self.dataset['samples'])
+
+    def __getitem__(self, index):
+        x = np.array(self.dataset['inputs'][index], dtype=np.int8)
+        sample = (self.dataset['samples'][index]).astype(np.str_)
+
+        return x, sample
 
 
 def shuffle(indices, seed=None):

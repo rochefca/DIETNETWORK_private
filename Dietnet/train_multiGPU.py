@@ -15,6 +15,11 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
+from torchinfo import summary
+
+# Multi gpu
+import torch.distributed as dist
+import torch.utils.data.distributed
 
 import helpers.dataset_utils as du
 import helpers.model as model
@@ -27,8 +32,8 @@ def main():
 
     # Create dir where training info will be saved
     """
-    The directory will be created in exp_path/exp_name with the name
-    exp_name_foldi where i is the number of the fold
+    The directory will be created in exp_path/exp_name withe the name exp_name_foldi
+    where i is the number of the fold
     """
     out_dir = lu.create_out_dir(args.exp_path, args.exp_name, args.which_fold)
 
@@ -41,22 +46,17 @@ def main():
     """
     config = {}
 
-    # Hyperparameters
-    f = open(os.path.join(args.exp_path, args.exp_name, args.config), 'r')
+    # Load config file of hyperparams
+    f = open(os.path.join(args.exp_path, args.exp_name, args.config))
     config_hyperparams = yaml.load(f, Loader=yaml.FullLoader)
-
-    # Project name (will be added to specifics item in config dict)
-    #project_name = config_hyperparams['project_name']
-    #config_hyperparams.pop('project_name')
 
     config['params'] = config_hyperparams
 
     # Add fold to config hyperparams
     config['params']['fold'] = args.which_fold
 
-    # Specifics
-    specifics = {}
-    #specifics['project_name'] = project_name
+    # Add path (parsed on command line) to full config
+    specifics = {} # Add paths to config dict
     specifics['exp_path'] = args.exp_path
     specifics['exp_name'] = args.exp_name
     specifics['out_dir'] = out_dir
@@ -64,7 +64,6 @@ def main():
     specifics['dataset'] = args.dataset
     specifics['embedding'] = args.embedding
     specifics['preprocess_params'] = args.preprocess_params
-    specifics['task'] = args.task
     specifics['param_init'] = args.param_init
 
     config['specifics'] = specifics
@@ -76,37 +75,53 @@ def main():
     lu.save_exp_params(config['specifics']['out_dir'],'full_config.log', config)
 
     # Training
-    train(config, args.comet_ml, args.comet_ml_project_name)
+    train(config)
 
 
-def train(config, comet_log, comet_project_name):
+def train(config):
     # ----------------------------------------
     #               COMET PROJECT
     # ----------------------------------------
-    if comet_log:
-        # Init experiment
-        if comet_project_name is None:
-            experiment = Experiment(auto_histogram_weight_logging=True)
-
-        else:
-            experiment = Experiment(
-                project_name=comet_project_name,
-                auto_metric_logging=False,
-                parse_args=False
-                )
-
-        # Log hyperparams
-        experiment.log_parameters(config['params'])
-
-        # Log specifics
-        experiment.log_others(config['specifics'])
+    experiment = Experiment(project_name="dietnet_1000G_cometml") # init exp
+    experiment.log_parameters(config['params']) # log hyperparams
+    experiment.log_others(config['specifics']) # log specifics
 
     # ----------------------------------------
-    #               SET DEVICE
+    #               SET GPU
     # ----------------------------------------
+    """
     print('Cuda available:', torch.cuda.is_available())
+    print('Current cuda device ', torch.cuda.current_device())
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print('device:', device)
+    """
+    # Number of gpus available on each node
+    ngpus_per_node = torch.cuda.device_count()
+    print('Nb of gpus available per node:', ngpus_per_node)
+
+    # Local rank : id of the process on each node
+    local_rank = int(os.environ.get("SLURM_LOCALID"))
+    print('local rank:', local_rank)
+
+    # Rank : Combinaison of node and local rank
+    rank = int(os.environ.get("SLURM_NODEID"))*ngpus_per_node + local_rank
+    print('Rank:', rank)
+
+    # Available gpus on each node (ex for 2 gpus per node we have : [0,1])
+    available_gpus = list(os.environ.get('CUDA_VISIBLE_DEVICES').replace(',',""))
+    print('Available gpus:', available_gpus)
+
+    # Set device
+    current_device = int(available_gpus[local_rank])
+    print('current device:', current_device)
+    torch.cuda.set_device(current_device)
+
+    # Init the process group
+    print('From Rank: {}, ==> Initializing Process Group...'.format(rank))
+    dist.init_process_group(backend='gloo', init_method='tcp://'+os.environ.get("MASTER_ADDR")+':3456', world_size=int(os.environ.get("SLURM_NTASKS")), rank=rank)
+    print("process group ready!")
+
+    print('From Rank: {}, ==> Making model..'.format(rank))
 
     # ----------------------------------------
     #               FIX SEED
@@ -131,7 +146,7 @@ def train(config, comet_log, comet_project_name):
     mus = preprocess_params['means_by_fold'][config['params']['fold']]
     sigmas = preprocess_params['sd_by_fold'][config['params']['fold']]
 
-    # Send mus and sigmans to device
+    # Send mus and sigmans to GPU
     mus = torch.from_numpy(mus).float().to(device)
     sigmas = torch.from_numpy(sigmas).float().to(device)
 
@@ -159,12 +174,6 @@ def train(config, comet_log, comet_project_name):
     du.FoldDataset.dataset_file = dataset_file
     du.FoldDataset.f = h5py.File(du.FoldDataset.dataset_file, 'r')
 
-    # Label conversion depending on task
-    if config['specifics']['task'] == 'classification':
-        du.FoldDataset.label_type = np.int64
-    elif config['specifics']['task'] == 'regression':
-        du.FoldDataset.label_type = np.float64
-
     train_set = du.FoldDataset(fold_idx[0])
     print('training set:', len(train_set))
     valid_set = du.FoldDataset(fold_idx[1])
@@ -181,9 +190,9 @@ def train(config, comet_log, comet_project_name):
         config['specifics']['embedding']),
         config['params']['fold'])
 
-    # Send to device
-    emb = emb.to(device)
-    emb = emb.float()
+    # Send to GPU
+    #emb = emb.to(device)
+    #emb = emb.float()
 
     # Normalize embedding
     emb_norm = (emb ** 2).sum(0) ** 0.5
@@ -203,11 +212,8 @@ def train(config, comet_log, comet_project_name):
     n_feats = emb.size()[0] # input of main net
 
     # Main net output size (nb targets)
-    if config['specifics']['task'] == 'classification':
-        with h5py.File(dataset_file, 'r') as f:
-            n_targets = len(f['label_names'])
-    elif config['specifics']['task'] == 'regression':
-        n_targets = 1
+    with h5py.File(dataset_file, 'r') as f:
+        n_targets = len(f['label_names'])
 
     print('\n***Nb features in models***')
     print('n_feats_emb:', n_feats_emb)
@@ -224,14 +230,12 @@ def train(config, comet_log, comet_project_name):
             param_init=config['specifics']['param_init'],
             input_dropout=config['params']['input_dropout'])
 
-    # Data parallel
-    if torch.cuda.device_count() > 1:
-        print("Let's use", torch.cuda.device_count(), "GPUs!")
-        comb_model.disc_net = nn.DataParallel(comb_model.disc_net)
-
-
     # Note: runs script in single GPU mode only!
-    comb_model.to(device)
+    #comb_model.to(device)
+    comb_model.cuda()
+    comb_model = torch.nn.parallel.DistributedDataParallel(comb_model, device_ids=[current_device])
+    print('From Rank: {}, ==> Preparing data..'.format(rank))
+
     #print(summary(comb_model.feat_emb, input_size=(294427,1,1,78)))
     #print(summary(comb_model.disc_net, input_size=[(138,1,1,294427),(100,294427)]))
 
@@ -239,10 +243,7 @@ def train(config, comet_log, comet_project_name):
     #               OPTIMIZATION
     # ----------------------------------------
     # Loss
-    if config['specifics']['task'] == 'classification':
-        criterion = nn.CrossEntropyLoss()
-    elif config['specifics']['task'] == 'regression':
-        criterion = nn.MSELoss()
+    criterion = nn.CrossEntropyLoss().cuda()
 
     # Optimizer
     lr = config['params']['learning_rate']
@@ -256,7 +257,9 @@ def train(config, comet_log, comet_project_name):
     # ----------------------------------------
     batch_size = config['params']['batch_size']
 
-    train_generator = DataLoader(train_set,
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_set)
+
+    train_generator = DataLoader(train_set, sampler=train_sampler,
                                  batch_size=batch_size, num_workers=0)
     valid_generator = DataLoader(valid_set,
                                  batch_size=batch_size,
@@ -267,162 +270,181 @@ def train(config, comet_log, comet_project_name):
                                 shuffle=False,
                                 num_workers=0)
 
-    # ----------------------------------------
-    #           TRAINING LOOP
-    # ----------------------------------------
-    # Save model summary: TO ADAPT
     """
-    lu.save_model_summary(config['specifics']['out_dir'],
-                          comb_model, criterion, optimizer)
+    for x_batch, y_batch, _ in train_generator:
+        print(summary(model=comb_model, input_data=[emb, x_batch]))
+        break
     """
-    # Monitoring: Epoch loss and accuracy setup
+    # Save model summary
+    lu.save_model_summary(config['specifics']['out_dir'], comb_model, criterion, optimizer)
+
+    # Monitoring: Epoch loss and accuracy
     train_losses = []
     train_acc = []
     valid_losses = []
     valid_acc = []
 
-    # Baseline
-    comb_model.eval()
-    min_loss, best_acc = mlu.eval_step(comb_model, device,
-            valid_generator, len(valid_set), criterion, mus, sigmas, emb,
-            config['specifics']['task'])
+    # this is the discriminative model!
+    discrim_model = mlu.create_disc_model(comb_model, emb, device)
 
+    # Monitoring: validation baseline
+    min_loss, best_acc = mlu.eval_step(device, valid_generator, len(valid_set),
+                                       discrim_model, criterion, mus, sigmas)
     print('baseline loss:',min_loss, 'baseline acc:', best_acc)
 
-    # Save the baseline model
-    lu.save_model_params(config['specifics']['out_dir'], comb_model)
-
-    # Patience: Nb epoch without improvement after which to stop training
+    # Monitoring: Nb epoch without improvement after which to stop training
     patience = 0
     max_patience = config['params']['patience']
     has_early_stoped = False
 
-    total_time = 0
-    for epoch in range(n_epochs):
-        print('Epoch {} of {}'.format(epoch+1, n_epochs), flush=True)
-        start_time = time.time()
+    with experiment.train():
+        total_time = 0
+        for epoch in range(n_epochs):
+            print('Epoch {} of {}'.format(epoch+1, n_epochs), flush=True)
+            start_time = time.time()
 
-        # ---Training---
-        comb_model.train()
+            train_sampler.set_epoch(epoch)
 
-        epoch_loss, epoch_acc = mlu.train_step(comb_model, device, optimizer,
-                train_generator, len(train_set), criterion, mus, sigmas, emb,
-                config['specifics']['task'])
+            # ---Training---
+            comb_model.train()
 
-        print('train loss:', epoch_loss, 'train acc:', epoch_acc, flush=True)
+            # Monitoring: Minibatch loss and accuracy
+            train_minibatch_mean_losses = []
+            train_minibatch_n_right = [] #nb of good classifications
 
-        train_losses.append(epoch_loss)
-        train_acc.append(epoch_acc)
+            #b = 0
+            for x_batch, y_batch, _ in train_generator:
+                x_batch, y_batch = x_batch.cuda(), y_batch.cuda()
+                x_batch.float()
+                # Replace missing values
+                du.replace_missing_values(x_batch, mus)
+                # Normalize
+                x_batch = du.normalize(x_batch, mus, sigmas)
 
-        # Comet
-        if comet_log:
-            experiment.log_metric("train_accuracy", epoch_acc, epoch=epoch, step=epoch)
-            experiment.log_metric("train_loss", epoch_loss, epoch=epoch, step=epoch)
+                optimizer.zero_grad()
+
+                # Forward pass
+                discrim_model_out = comb_model(emb, x_batch)
+
+                # Get prediction (softmax)
+                _, pred = mlu.get_predictions(discrim_model_out)
+
+                # Compute loss
+                loss = criterion(discrim_model_out, y_batch)
+                # Compute gradients
+                loss.backward()
+
+                # Optim
+                optimizer.step()
+
+                # Monitoring: Minibatch
+                train_minibatch_mean_losses.append(loss.item())
+                train_minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
+
+                #b += len(y_batch)
+                #print('completed batch', b, 'samples passed')
+
+            # Monitoring: Epoch
+            epoch_loss = np.array(train_minibatch_mean_losses).mean()
+            train_losses.append(epoch_loss)
+
+            epoch_acc = mlu.compute_accuracy(train_minibatch_n_right,
+                                             len(train_set))
+            train_acc.append(epoch_acc)
+            print('train loss:', epoch_loss, 'train acc:', epoch_acc, flush=True)
+
+            # Comet
+            #experiment.log_metric("train_accuracy", epoch_acc, step=epoch)
 
 
-        # ---Validation---
-        comb_model.eval()
+            # ---Validation---
+            """
+            comb_model = comb_model.eval()
+            epoch_loss, epoch_acc = mlu.eval_step(device, valid_generator, len(valid_set),
+                                                  discrim_model, criterion, mus, sigmas)
 
-        epoch_loss, epoch_acc = mlu.eval_step(comb_model, device,
-                valid_generator, len(valid_set), criterion, mus, sigmas, emb,
-                config['specifics']['task'])
+            valid_losses.append(epoch_loss)
+            valid_acc.append(epoch_acc)
+            print('valid loss:', epoch_loss, 'valid acc:', epoch_acc,flush=True)
 
-        print('valid loss:', epoch_loss, 'valid acc:', epoch_acc,flush=True)
-
-        valid_losses.append(epoch_loss)
-        valid_acc.append(epoch_acc)
-
-        # Comet
-        if comet_log:
-            experiment.log_metric("valid_accuracy", epoch_acc, epoch=epoch, step=epoch)
-            experiment.log_metric("valid_loss", epoch_loss, epoch=epoch, step=epoch)
-
-        # ---Baseline: check  improvement---
-        if mlu.has_improved(best_acc, epoch_acc,min_loss, epoch_loss):
+            # Comet
+            #experiment.log_metric("valid_accuracy", epoch_acc, step=epoch)
+            """
+            # Early stop
+            if mlu.has_improved(best_acc, epoch_acc, min_loss, epoch_loss):
                 patience = 0
                 if epoch_acc > best_acc:
                     best_acc = epoch_acc
                 if epoch_loss < min_loss:
                     min_loss = epoch_loss
-
                 # Save model parameters (for later inference)
-                print('best validation acc achieved: {} (loss {}) at epoch {} saving model ...'.format(best_acc, epoch_loss, epoch))
+                print('best acc achieved: {} (loss {}) at epoch {} saving model ...'.format(best_acc, epoch_loss, epoch))
                 lu.save_model_params(config['specifics']['out_dir'], comb_model)
-        else:
-            patience += 1
+            else:
+                patience += 1
 
-        # ---Early stopping---
-        if patience >= max_patience:
-            has_early_stoped = True
-            n_epochs = epoch - patience
-            break # exit training loop
+            if patience >= max_patience:
+                has_early_stoped = True
+                n_epochs = epoch - patience
+                break # exit training loop
 
-        # ---Anneal laerning rate---
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = \
-                    param_group['lr'] * config['params']['learning_rate_annealing']
+            # Anneal laerning rate
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = \
+                        param_group['lr'] * config['params']['learning_rate_annealing']
 
-        # ---Time---
-        end_time = time.time()
-        total_time += end_time-start_time
-        print('time:', end_time-start_time, flush=True)
+            end_time = time.time()
+            total_time += end_time-start_time
+            print('time:', end_time-start_time, flush=True)
 
-    # End of training phase
-    print('Early stoping:', has_early_stoped, flush=True)
+        # Finish training
+        print('Early stoping:', has_early_stoped)
 
-    # ----------------------------------------
-    #                 TEST
-    # ----------------------------------------
-    # Reload weights from early stoping
-    model_weights_path = os.path.join(config['specifics']['out_dir'], 'model_params.pt')
-    comb_model.load_state_dict(torch.load(model_weights_path))
+    # ---Test---
+    with experiment.test():
+        #  reload weights from early stopped model
+        discrim_model = mlu.load_model(os.path.join(config['specifics']['out_dir'], 'model_params.pt'),
+                                       emb,
+                                       device,
+                                       n_feats=n_feats_emb,
+                                       n_hidden_u_aux=config['params']['nb_hidden_u_aux'],
+                                       n_hidden_u_main=config['params']['nb_hidden_u_aux'][-1:]+config['params']['nb_hidden_u_main'],
+                                       n_targets=n_targets,
+                                       input_dropout=config['params']['input_dropout'])
 
-    # Put model in eval mode
-    comb_model.eval()
+        comb_model = comb_model.eval()
+        score, pred, acc = mlu.test(device, test_generator, len(test_set), discrim_model, mus, sigmas)
 
-    # Test step
-    print('Testing model', flush=True)
-    test_samples, test_ys, score, pred, acc = mlu.test_step(comb_model, device,
-            test_generator, len(test_set), mus, sigmas, emb,
-            config['specifics']['task'])
+        print('Final accuracy:', str(acc))
+        print('total running time:', str(total_time))
 
-    print('Final accuracy:', str(acc), flush=True)
-    print('total running time:', str(total_time), flush=True)
+        # Comet
+        #experiment.log_metric("accuracy", acc)
 
-    # Comet
-    if comet_log:
-        experiment.log_metric("test accuracy", acc)
+    ## TO DO
+    """
+    # Save results
+    lu.save_results(config['out_dir'],
+                    test_set.samples,
+                    test_set.ys,
+                    data['label_names'],
+                    score, pred,
+                    n_epochs)
 
-    # Save test results (model_predictions.npz)
-    print('Saving results', flush=True)
-    if config['specifics']['task'] == 'classification':
-        with h5py.File(dataset_file, 'r') as f:
-            label_names = np.array(f['label_names']).astype(np.str_)
-
-        lu.save_results(config['specifics']['out_dir'],
-                test_samples, test_ys, label_names, score.cpu(), pred.cpu())
-    elif config['specifics']['taks'] == 'regression':
-        print('TO DO')
-
-    # Save additional data (additional_data.npz)
-    print('saving additional results', flush=True)
-    train_samples = train_set.get_samples()
-    valid_samples = valid_set.get_samples()
-    with h5py.File(dataset_file, 'r') as f:
-        snp_names = np.array(f['snp_names']).astype(np.str_)
-
-    lu.save_additional_data(config['specifics']['out_dir'],
-                            train_samples, valid_samples, test_samples,
-                            test_ys, pred.cpu(), score.cpu(),
-                            label_names, snp_names, mus.cpu(), sigmas.cpu())
-
-
+    # Save additional data
+    lu.save_additional_data(config['out_dir'],
+                            train_set.samples, valid_set.samples,
+                            test_set.samples, test_set.ys,
+                            pred, score,
+                            data['label_names'], data['snp_names'],
+                            mus, sigmas)
+    """
 def parse_args():
     parser = argparse.ArgumentParser(
-            description=('Train, eval and test model of a given fold')
+            description=('Preprocess features for main network '
+                         'and train model for a given fold')
             )
 
-    # Paths
     parser.add_argument(
             '--exp-path',
             type=str,
@@ -439,7 +461,6 @@ def parse_args():
                   'exp-path. ')
             )
 
-    # Files
     parser.add_argument(
             '--config',
             type=str,
@@ -466,30 +487,21 @@ def parse_args():
             )
 
     parser.add_argument(
-            '--embedding',
-            type=str,
-            default='embedding.npz',
-            help=('Filename of embedding returned by generate_embedding.py '
-                  'The file must be in directory specified with exp-path. '
-                  'Default: %(default)s')
-            )
+        '--embedding',
+        type=str,
+        default='embedding.npz',
+        help=('Filename of embedding returned by generate_embedding.py '
+              'The file must be in directory specified with exp-path. '
+              'Default: %(default)s')
+        )
 
     parser.add_argument(
-            '--preprocess-params',
-            type=str,
-            default='preprocessing_params.npz',
-            help='Normalization parameters obtained with get_preprocessing_params.py'
-            )
+        '--preprocess-params',
+        type=str,
+        default='preprocessing_params.npz',
+        help='Normalization parameters obtained with get_preprocessing_params.py'
+        )
 
-    # Task
-    parser.add_argument(
-            '--task',
-            choices = ['classification', 'regression'],
-            required=True,
-            help='Type of prediction : classification or regression'
-            )
-
-    # Fold
     parser.add_argument(
             '--which-fold',
             type=int,
@@ -497,24 +509,10 @@ def parse_args():
             help='Which fold to train (1st fold is 0). Default: %(default)i'
             )
 
-    # Optional param init
     parser.add_argument(
             '--param-init',
             type=str,
             help='File of parameters initialization values'
-            )
-
-    # Comet-ml
-    parser.add_argument(
-            '--comet-ml',
-            action='store_true',
-            help='Use this flag to run experiment with comet ml'
-            )
-
-    parser.add_argument(
-            '--comet-ml-project-name',
-            type=str,
-            help='Specific project were to send comet Experiment'
             )
 
     return parser.parse_args()
