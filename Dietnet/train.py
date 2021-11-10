@@ -60,7 +60,7 @@ def main():
     specifics['exp_path'] = args.exp_path
     specifics['exp_name'] = args.exp_name
     specifics['out_dir'] = out_dir
-    specifics['folds_indexes'] = args.folds_indexes
+    specifics['partition'] = args.partition
     specifics['dataset'] = args.dataset
     specifics['embedding'] = args.embedding
     specifics['preprocess_params'] = args.preprocess_params
@@ -141,7 +141,7 @@ def train(config, comet_log, comet_project_name):
     print('Loading fold indexes split into train, valid, test sets')
     all_folds_idx = np.load(os.path.join(
         config['specifics']['exp_path'],
-        config['specifics']['folds_indexes']),
+        config['specifics']['partition']),
         allow_pickle=True)
 
     fold_idx = all_folds_idx['folds_indexes'][config['params']['fold']]
@@ -457,9 +457,9 @@ def parse_args():
             )
 
     parser.add_argument(
-            '--folds-indexes',
+            '--partition',
             type=str,
-            default='folds_indexes.npz',
+            default='partitioned_idx.npz',
             help=('Filename of folds indexes returned by create_dataset.py '
                   'The file must be in directory specified with exp-path. '
                   'Default: %(default)s')
