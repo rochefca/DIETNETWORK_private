@@ -2,25 +2,64 @@ import math
 
 import numpy as np
 
+import h5py
+
 import torch
 
 
 class FoldDataset(torch.utils.data.Dataset):
-    def __init__(self, xs, ys, samples):
-        self.xs = xs #tensor on gpu
-        self.ys = ys #tensor on gpu
-        self.samples = samples #np array
+    # These variables are set in train.py
+    dataset_file = None #path to h5py file
+    label_type = None # Int if classification, float if regression
+
+    def __init__(self, set_indexes):
+        self.set_indexes = set_indexes
 
     def __len__(self):
-        return len(self.samples)
+        return len(self.set_indexes)
 
     def __getitem__(self, index):
-        # Index can be a number or a list of numbers
-        x = self.xs[index]
-        y = self.ys[index]
-        sample = self.samples[index]
-
+        # Data of all sets (train, valid, test) is in one file
+        # so we convert the index to match file index
+        file_index = self.set_indexes[index]
+        """
+        with h5py.File(FoldDataset.dataset_file, 'r') as f:
+            x = np.array(f['inputs'][file_index], dtype=np.int8)
+            y = (f['labels'][file_index]).astype(np.int)
+            sample = (f['samples'][file_index]).astype(np.str_)
+        """
+        x = np.array(self.f['inputs'][file_index], dtype=np.int8)
+        y = (self.f['labels'][file_index]).astype(self.label_type)
+        sample = (self.f['samples'][file_index]).astype(np.str_)
         return x, y, sample
+        """
+        if self.dataset is None:
+            self.dataset = h5py.File(self.dataset_file, 'r')
+
+        return np.array(self.dataset['inputs'][file_index], dtype=np.int8), \
+               np.array(self.dataset['labels'][file_index]), \
+               np.array(self.dataset['samples'][file_index], dtype=np.int)
+        """
+
+    def get_samples(self):
+        indexes = np.sort(self.set_indexes)
+        samples = (self.f['samples'][indexes]).astype(np.str_)
+
+        return samples
+
+
+class ExternalTestDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset_file):
+        self.dataset = h5py.File(dataset_file, 'r')
+
+    def __len__(self):
+        return len(self.dataset['samples'])
+
+    def __getitem__(self, index):
+        x = np.array(self.dataset['inputs'][index], dtype=np.int8)
+        sample = (self.dataset['samples'][index]).astype(np.str_)
+
+        return x, sample
 
 
 def shuffle(indices, seed=None):
@@ -39,7 +78,7 @@ def partition(indices, nb_folds, train_valid_ratio, seed=None):
     test set of last fold will have more samples
     The number of extra samples will always be < nb_folds
     """
-    # Shuffle data is seed is not None
+    # Shuffle data
     if seed is not None:
         np.random.seed(seed)
     shuffle(indices, seed=seed)
@@ -125,6 +164,26 @@ def load_genotypes(filename):
     return samples, snps, genotypes
 
 
+def load_genotypes_parallel(line):
+    # Line : Sample id and genotype values across all SNPs
+    sample = (line.split('\t')[0]).strip()
+
+    # Fill with genotypes of all SNPs for the individual
+    genotypes = []
+    for i in line.split('\t')[1:]:
+        # Replace missing values with -1
+        if i.strip() == './.' or i.strip() == 'NA':
+            genotype = -1
+        else:
+            genotype = int(i.strip())
+
+        genotypes.append(genotype)
+
+    genotypes = np.array(genotypes, dtype='int8')
+
+    return sample, genotypes
+
+
 def load_labels(filename):
     with open(filename, 'r') as f:
         lines = f.readlines()
@@ -172,24 +231,30 @@ def load_embedding(filename, which_fold):
     return emb
 
 
-def get_fold_data(which_fold, folds_indexes, data):
+def get_fold_data(which_fold, folds_indexes, data, prediction):
+    # Class labels identifier in hdf5 file (depends on prediction type)
+    if prediction == 'classification':
+        label = 'labels'
+    elif prediction == 'regression':
+        label = 'emb_labels'
+
     # Indices of each set for the fold (0:train, 1:valid, 2:test)
     fold_indexes = folds_indexes[which_fold]
-    train_indexes = fold_indexes[0]
-    valid_indexes = fold_indexes[1]
-    test_indexes = fold_indexes[2]
+    train_indexes = np.sort(fold_indexes[0]) # sort is a hdf5 requirement
+    valid_indexes = np.sort(fold_indexes[1])
+    test_indexes = np.sort(fold_indexes[2])
 
     # Get data (x,y,samples) of each set (train, valid, test)
     x_train = data['inputs'][train_indexes]
-    y_train = data['labels'][train_indexes]
+    y_train = data[label][train_indexes]
     samples_train = data['samples'][train_indexes]
 
     x_valid = data['inputs'][valid_indexes]
-    y_valid = data['labels'][valid_indexes]
+    y_valid = data[label][valid_indexes]
     samples_valid = data['samples'][valid_indexes]
 
     x_test = data['inputs'][test_indexes]
-    y_test = data['labels'][test_indexes]
+    y_test = data[label][test_indexes]
     samples_test = data['samples'][test_indexes]
 
     return train_indexes, valid_indexes, test_indexes,\
@@ -249,12 +314,16 @@ def compute_norm_values(x):
     # Compute mean of every column (feature)
     per_feature_mean = torch.sum(x*mask, dim=0) / torch.sum(mask, dim=0)
 
+    print('Computed per feature mean')
+
     # S.d. of every column (feature)
     per_feature_sd = torch.sqrt(
             torch.sum((x*mask-mask*per_feature_mean)**2, dim=0) / \
                     (torch.sum(mask, dim=0) - 1)
                     )
     per_feature_sd += 1e-6
+
+    print('Computed per feature sd')
 
     return per_feature_mean, per_feature_sd
 

@@ -33,14 +33,12 @@ def create_out_dir(exp_path, exp_name, fold):
     return dir_path
 
 
-def save_exp_params(config):
+def save_exp_params(out_dir, filename, config):
     """
     Creates the file exp_params.log where experiment
     configurations will be saved for reproducibility
     """
-    filename = 'exp_params.log'
-
-    with open(os.path.join(config['out_dir'], filename), 'w') as f:
+    with open(os.path.join(out_dir, filename), 'w') as f:
         for k,v in config.items():
             f.write(k + ':' + str(v) + '\n')
 
@@ -89,26 +87,36 @@ def save_model_summary(out_dir, model, criterion, optimizer):
         f.write(text)
 
 
-def save_model_params(out_dir, model):
-    filename = 'model_params.pt'
+def save_model_params(out_dir, model, filename='model_params.pt'):
+    #filename = 'model_params.pt'
 
     print('Saving model parameters to %s' % os.path.join(out_dir, filename))
 
     torch.save(model.state_dict(), os.path.join(out_dir, filename))
 
 
-def save_results(out_dir, samples, labels, label_names, score, pred, n_epochs):
+def save_results(out_dir, samples, labels, label_names, score, pred):
     filename = 'model_predictions.npz'
 
     print('Saving model predictions to %s' % os.path.join(out_dir, filename))
 
     np.savez(os.path.join(out_dir, filename),
              test_samples=samples,
-             test_labels=labels.cpu(),
-             test_scores=score.cpu(),
-             test_preds=pred.cpu(),
-             label_names=label_names,
-             n_epochs=n_epochs)
+             test_labels=labels,
+             test_scores=score,
+             test_preds=pred,
+             label_names=label_names)
+
+
+def save_results_external_dataset(out_dir, samples, label_names,
+        score, pred, test_name):
+    print('Saving model predictions to %s' % os.path.join(out_dir, test_name))
+
+    np.savez(os.path.join(out_dir, test_name),
+             test_samples=samples,
+             test_scores=score,
+             test_preds=pred,
+             label_names=label_names)
 
 
 def save_additional_data(out_dir,
@@ -124,10 +132,10 @@ def save_additional_data(out_dir,
              sample_ids_train=train_samples,
              sample_ids_valid=valid_samples,
              sample_ids_test=test_samples,
-             test_labels=test_labels.cpu(),
-             test_preds=pred.cpu(),
-             test_scores=score.cpu(),
+             test_labels=test_labels,
+             test_preds=pred,
+             test_scores=score,
              label_names=label_names,
              feature_names=feature_names,
-             norm_mus=norm_mus.cpu(),
-             norm_sigmas=norm_sigmas.cpu())
+             norm_mus=norm_mus,
+             norm_sigmas=norm_sigmas)

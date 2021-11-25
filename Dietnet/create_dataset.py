@@ -1,79 +1,125 @@
 """
-Script to parse data into a npz format and partition data into folds
-Creates dataset.npz and folds_indexes.npz (default filenames)
+Script to parse and save data into a hdf5 file format
+Creates dataset.hdf5 (default filename)
 """
 import argparse
 import os
+import multiprocessing as mp
+import time
 
 import numpy as np
+
+import h5py
 
 import helpers.dataset_utils as du
 
 
 def create_dataset():
     args = parse_args()
+    start_time = time.time()
 
-    print('Loading data')
-    # Load samples, snp names and genotype values
-    samples, snps, genotypes = du.load_genotypes(args.genotypes)
+    #----------------------------
+    # Load samples and genotypes
+    #----------------------------
+    genotype_start_time = time.time()
+    if args.parallel_loading:
+        # Multiprocessing to load lines in parallel
+        ncpus = args.ncpus
+        print('Loading genotypes in parallel using', ncpus, 'processes')
+        pool = mp.Pool(processes=ncpus) #this starts ncpus nb of processes
 
-    # Load samples with their labels
+        # Results returned by processes
+        results = []
+
+        # Every line is read by a different process
+        with open(args.genotypes, 'r') as f:
+            header_line = next(f)
+            for line in f:
+                # Add sample, sample's genotype accros all SNPs
+                results.append(pool.apply_async(du.load_genotypes_parallel, args=(line,)))
+
+        # Get samples and genotypes from multiprocess results
+        print('Parsed genotypes, getting the results')
+        results_values = [p.get() for p in results]
+        samples = np.array([i[0] for i in results_values])
+        genotypes = np.array([i[1] for i in results_values])
+        print('Loaded', genotypes.shape[0], 'samples with', genotypes.shape[1], 'genotypes')
+
+        # Get snps names from header line
+        print('Loading snps names')
+        snps = np.array([i.strip() for i in header_line.split('\t')[1:]], dtype='S')
+        print('Loaded', len(snps), 'snps')
+
+    else:
+        print('Loading data')
+        # Load samples, snp names and genotype values
+        samples, snps, genotypes = du.load_genotypes(args.genotypes)
+
+    genotype_end_time = time.time()
+    print('Genotypes loading time:', genotype_end_time - genotype_start_time)
+
+    #----------------------------
+    # Load samples and labels
+    #----------------------------
+    label_start_time = time.time()
+    print('\nLoading labels')
     samples_in_labels, labels = du.load_labels(args.labels)
 
-    # Ensure given samples are in same order in genotypes and labels files
+    # Order labels to match samples order obtained from genotypes file
+    print('Ordering labels to match genotypes order, using samples ids')
     ordered_labels = du.order_labels(samples, samples_in_labels, labels)
 
     # If labels are categories, encode labels as numbers
-    if args.prediction == 'classification' :
+    if args.task == 'classification' :
         label_names, encoded_labels = numeric_encode_labels(ordered_labels)
+    # If labels are for regression task
+    elif args.task == 'regression':
+        # Convert string to float (this is label for regression task)
+        ordered_labels = ordered_labels.astype('float64')
 
-        # Save dataset to file
-        print('Saving dataset and fold indexes to', args.exp_path)
-        np.savez(os.path.join(args.exp_path,args.data_out),
-                 inputs=genotypes,
-                 snp_names=snps,
-                 labels=encoded_labels,
-                 label_names=label_names,
-                 samples=samples)
+        # Get class labels for embedding computation
+        print('Loading class labels')
+        samples_in_class_labels, class_labels = du.load_labels(args.class_labels)
+        print('Ordering class labels to match genotypes order, using samples ids')
+        ordered_class_labels=du.order_labels(samples,
+                                             samples_in_class_labels,
+                                             class_labels)
+        # Encode labels as numbers
+        class_label_names, encoded_class_labels = numeric_encode_labels(
+                ordered_class_labels)
 
-    # If labels are not categories
-    else:
-        print('Saving dataset and fold indexes to', args.exp_path)
-        np.savez(os.path.join(args.exp_path, args.data_out),
-                 inputs=genotypes,
-                 snp_names=snp_names,
-                 labels=ordered_labels,
-                 samples=samples)
+    label_end_time = time.time()
+    print('Labels loading time:', label_end_time - label_start_time)
 
-    # Partition data into fold (using indexes of the numpy arrays)
-    indices = np.arange(len(samples))
-    partition = du.partition(indices,
-                             args.nb_folds,
-                             args.train_valid_ratio,
-                             seed=args.seed)
-    np.savez(os.path.join(args.exp_path,args.fold_out),
-             folds_indexes=np.array(partition,dtype=object),
-             seed=np.array([args.seed]))
+    #----------------------------
+    # Save dataset to file
+    #----------------------------
+    print('\nSaving dataset to', os.path.join(args.exp_path,args.out))
+    f = h5py.File(os.path.join(args.exp_path,args.out), 'w')
+    # Input features
+    f.create_dataset('inputs', data=genotypes)
+    snps = snps.astype('S') # hdf5 doesn't support np UTF-8 encoding
+    f.create_dataset('snp_names', data=snps)
+    # Samples
+    samples = samples.astype('S')
+    f.create_dataset('samples', data=samples)
+    # Labels
+    if args.task == 'classification':
+        f.create_dataset('labels', data=encoded_labels)
+        label_names = label_names.astype('S')
+        f.create_dataset('label_names', data=label_names)
 
+    elif args.task == 'regression':
+        f.create_dataset('labels', data=ordered_labels)
+        # Labels for embedding computation
+        f.create_dataset('class_labels', data=encoded_class_labels)
+        class_label_names = class_label_names.astype('S')
+        f.create_dataset('class_label_names', data=class_label_names)
 
-def _load_labels(filename):
-    with open(filename, 'r') as f:
-        lines = f.readlines()
+    f.close()
 
-    mat = np.array([l.strip('\n').split('\t') for l in lines])
-
-    samples = mat[1:,0]
-    labels = mat[1:,1]
-
-    print('Loaded', str(len(labels)),'labels of', str(len(samples)),'samples')
-
-    return samples, labels
-
-
-def _order_labels(samples, samples_in_labels, labels):
-    idx = [np.where(samples_in_labels == s)[0][0] for s in samples]
-
-    return np.array([labels[i] for i in idx])
+    end_time = time.time()
+    print('\nEnd of execution. Execution time:', end_time-start_time)
 
 
 def onehot_encode_labels(labels):
@@ -96,15 +142,14 @@ def numeric_encode_labels(labels):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-            description='Create dataset and partition data into folds.'
+            description='Create hdf5 dataset from genotype and label files.'
             )
 
     parser.add_argument(
             '--exp-path',
             type=str,
             required=True,
-            help=('Path to directory where returned results (parsed dataset '
-                  ' and fold indexes) will be saved.')
+            help='Path to directory where dataset will be saved'
             )
 
     parser.add_argument(
@@ -118,6 +163,18 @@ def parse_args():
             )
 
     parser.add_argument(
+            '--parallel-loading',
+            action='store_true',
+            help='Use this flag to load samples in parallel.'
+            )
+
+    parser.add_argument(
+            '--ncpus',
+            type=int,
+            help='Number of cpus for parallel loading'
+            )
+
+    parser.add_argument(
             '--labels',
             type=str,
             required=True,
@@ -126,52 +183,28 @@ def parse_args():
             )
 
     parser.add_argument(
-            '--prediction',
+            '--task',
             choices=['classification', 'regression'],
             default='classification',
-            help=('Type of prediction (for labels encoding) '
+            help=('Task that determines labels encoding '
                   'Classification: Labels are numerically encoded '
                   '(one number per category). '
-                  'Regression: Labels are kept the same. '
+                  'Regression: Labels are float. '
                   'Default: %(default)s')
             )
 
     parser.add_argument(
-            '--nb-folds',
-            type=int,
-            default=5,
-            help='Number of folds. Use 1 for no folds. Default: %(default)i'
+            '--class-labels',
+            help=('Class labels if embedding is computed by class '
+                  'but the task is regression (--labels are not classes) '
+                  'Like the --labels, this must contain one column '
+                  'with individuals ids and the second column the label')
             )
 
     parser.add_argument(
-            '--train-valid-ratio',
-            type=float,
-            default=0.75,
-            help=('Ratio (between 0-1) for split of train and valid sets. '
-                  'For example, 0.75 will use 75%% of data for training '
-                  'and 25%% of data for validation. Default: %(default).2f')
-            )
-
-    parser.add_argument(
-            '--seed',
-            type=int,
-            default=23,
-            help=('Seed to use for fixing the shuffle of samples '
-                  'before partitioning into folds. '
-                  'Default: %(default)i')
-            )
-
-    parser.add_argument(
-            '--data-out',
-            default='dataset.npz',
+            '--out',
+            default='dataset.hdf5',
             help='Filename for the returned dataset. Default: %(default)s'
-            )
-
-    parser.add_argument(
-            '--fold-out',
-            default='folds_indexes.npz',
-            help=('Filename for returned samples indexes of each fold. '
-                  'Default: %(default)s')
             )
 
     return parser.parse_args()

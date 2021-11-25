@@ -179,7 +179,7 @@ class Discrim_net2(nn.Module):
         nn.init.zeros_(self.out.bias)
 
 
-    def forward(self, x, fatLayer_weights):
+    def forward(self, x, fatLayer_weights, save_layers=False):
         # input size: batch_size x n_feats
         # weight = comes from feat embedding net
         # now ^^^ is passed with forward
@@ -207,6 +207,9 @@ class Discrim_net2(nn.Module):
         if self.incl_softmax:
             out = torch.softmax(out, 1)
 
+        if save_layers:
+            return next_input, out
+
         return out
 
 
@@ -222,14 +225,80 @@ class CombinedModel(nn.Module):
                                      incl_bias, incl_softmax)
 
 
-    def forward(self, emb, x_batch):
+    def forward(self, emb, x_batch, save_layers=False):
         # Forward pass in auxilliary net
         feat_emb_model_out = self.feat_emb(emb)
         # Forward pass in discrim net
         fatLayer_weights = torch.transpose(feat_emb_model_out,1,0)
-        discrim_model_out = self.disc_net(x_batch, fatLayer_weights)
+        discrim_model_out = self.disc_net(x_batch, fatLayer_weights, save_layers)
 
         return discrim_model_out
+
+
+class Mlp(nn.Module):
+    def __init__(self, n_feats,
+                 n_hidden_u, n_targets,
+                 input_dropout=0., eps=1e-5):
+        super(Mlp, self).__init__()
+
+        self.hidden_layers = []
+        self.bn = [] # batch normalization
+        self.out = None # Output layer
+
+        # Dropout on input layer
+        self.input_dropout = nn.Dropout(p=input_dropout)
+        # Dropout
+        self.dropout = nn.Dropout()
+
+        # ---Layers and batchnorm (bn)  definition ---
+        for i in range(len(n_hidden_u)):
+            # First layer: linear function handle in forward function below
+            if i == 0:
+                self.hidden_layers.append(
+                        nn.Linear(n_feats, n_hidden_u[i]))
+                self.bn.append(
+                        nn.BatchNorm1d(num_features=n_hidden_u[i], eps=eps))
+            # Hidden layers
+            else:
+                self.hidden_layers.append(
+                        nn.Linear(n_hidden_u[i-1], n_hidden_u[i]))
+                self.bn.append(
+                        nn.BatchNorm1d(num_features=n_hidden_u[i], eps=eps))
+            # Output layer
+            self.out = nn.Linear(n_hidden_u[-1], n_targets)
+
+        self.hidden_layers = nn.ModuleList(self.hidden_layers)
+        self.bn = nn.ModuleList(self.bn)
+
+        # ---Parameters initialization---
+        for layer in self.hidden_layers:
+            nn.init.xavier_uniform_(layer.weight)
+
+        nn.init.xavier_uniform_(self.out.weight)
+
+        # ---Bias initialization---
+        for layer in self.hidden_layers:
+            nn.init.zeros_(layer.bias)
+
+        # Output layer
+        nn.init.zeros_(self.out.bias)
+
+
+    def forward(self, x):
+        x = self.input_dropout(x)
+
+        next_input = x
+        for layer, bn in zip(self.hidden_layers, self.bn):
+            z = layer(next_input)
+            a = torch.relu(z)
+            a = bn(a)
+            a = self.dropout(a)
+            next_input = a
+
+        # Output layer
+        out = self.out(next_input)
+
+        return out
 
 
 if __name__ == '__main__':
@@ -242,7 +311,6 @@ if __name__ == '__main__':
     # Intantiate models
     emb_model = Feat_emb_net(n_feats=x_emb.size()[1], n_hidden_u=100)
     emb_model_out = emb_model(x_emb)
-    print(emb_model_out.size())
     fatLayer_weights = torch.transpose(emb_model_out,1,0)
     discrim_model = Discrim_net(fatLayer_weights=fatLayer_weights,
                                 n_feats=x.size()[1],
