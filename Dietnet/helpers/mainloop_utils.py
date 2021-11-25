@@ -9,7 +9,7 @@ from helpers import dataset_utils as du
 
 
 def train_step(comb_model, device, optimizer, train_generator, set_size,
-               criterion, mus, sigmas, emb, task):
+               criterion, mus, sigmas, emb, task, normalize):
     # Monitoring : Minibatch setup
     minibatch_loss = []
     minibatch_n_right = [] # nb of good classifications
@@ -17,13 +17,14 @@ def train_step(comb_model, device, optimizer, train_generator, set_size,
     for x_batch, y_batch, _ in train_generator:
         # Send data to device
         x_batch, y_batch = x_batch.to(device), y_batch.to(device)
-        x_batch.float()
+        x_batch = x_batch.float()
 
         # Replace missing values
         du.replace_missing_values(x_batch, mus)
 
         # Normalize
-        x_batch = du.normalize(x_batch, mus, sigmas)
+        if normalize:
+            x_batch = du.normalize(x_batch, mus, sigmas)
 
         # Reset optimizer
         optimizer.zero_grad()
@@ -60,7 +61,7 @@ def train_step(comb_model, device, optimizer, train_generator, set_size,
 
 
 def eval_step(comb_model, device, valid_generator, set_size,
-              criterion, mus, sigmas, emb, task):
+              criterion, mus, sigmas, emb, task, normalize):
     # Monitoring: Minibatch setup
     minibatch_loss = []
     minibatch_n_right = [] # nb of good classifications
@@ -74,7 +75,8 @@ def eval_step(comb_model, device, valid_generator, set_size,
         du.replace_missing_values(x_batch, mus)
 
         # Normalize
-        x_batch = du.normalize(x_batch, mus, sigmas)
+        if normalize:
+            x_batch = du.normalize(x_batch, mus, sigmas)
 
         # Forward pass
         comb_model_out = comb_model(emb, x_batch)
@@ -101,7 +103,7 @@ def eval_step(comb_model, device, valid_generator, set_size,
 
 
 def test_step(comb_model, device, test_generator, set_size,
-              mus, sigmas, emb, task):
+              mus, sigmas, emb, task, normalize):
     # Saving data seen while looping through minibatches
     minibatch_n_right = [] #number of good classifications
     test_pred = torch.tensor([]).to(device) #prediction of each sample
@@ -123,7 +125,8 @@ def test_step(comb_model, device, test_generator, set_size,
         du.replace_missing_values(x_batch, mus)
 
         # Normalize
-        x_batch = du.normalize(x_batch, mus, sigmas)
+        if normalize:
+            x_batch = du.normalize(x_batch, mus, sigmas)
 
         # Forward pass
         comb_model_out = comb_model(emb, x_batch)

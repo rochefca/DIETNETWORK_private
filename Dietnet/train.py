@@ -63,6 +63,7 @@ def main():
     specifics['partition'] = args.partition
     specifics['dataset'] = args.dataset
     specifics['embedding'] = args.embedding
+    specifics['normalize'] = args.normalize
     specifics['preprocess_params'] = args.preprocess_params
     specifics['task'] = args.task
     specifics['param_init'] = args.param_init
@@ -73,13 +74,14 @@ def main():
     pprint.pprint(config)
 
     # Save experiment configurations (out_dir/full_config.log)
-    lu.save_exp_params(config['specifics']['out_dir'],'full_config.log', config)
+    if not args.optimization:
+        lu.save_exp_params(config['specifics']['out_dir'],'full_config.log', config)
 
     # Training
-    train(config, args.comet_ml, args.comet_ml_project_name)
+    train(config, args.comet_ml, args.comet_ml_project_name, args.optimization)
 
 
-def train(config, comet_log, comet_project_name):
+def train(config, comet_log, comet_project_name, optimization_exp):
     # ----------------------------------------
     #               COMET PROJECT
     # ----------------------------------------
@@ -123,11 +125,13 @@ def train(config, comet_log, comet_project_name):
     #           LOAD MEAN and SD
     # ----------------------------------------
     print('loading preprocessing parameters')
+
     # Mean and sd per feature computed on training set
     preprocess_params = np.load(os.path.join(
         config['specifics']['exp_path'],
         config['specifics']['preprocess_params'])
         )
+
     mus = preprocess_params['means_by_fold'][config['params']['fold']]
     sigmas = preprocess_params['sd_by_fold'][config['params']['fold']]
 
@@ -236,6 +240,23 @@ def train(config, comet_log, comet_project_name):
     #print(summary(comb_model.disc_net, input_size=[(138,1,1,294427),(100,294427)]))
 
     # ----------------------------------------
+    #    FILE WHERE TO SAVE MODEL PARAMS
+    # ----------------------------------------
+    model_params_filename = 'model_params' \
+            + '_epochs_' + str(config['params']['epochs']) \
+            + '_inpdrop_' + str(config['params']['input_dropout']) \
+            + '_lr_' + str(config['params']['learning_rate']) \
+            + '_lra_' + str(config['params']['learning_rate_annealing']) \
+            + '_auxu_' \
+                + str(config['params']['nb_hidden_u_aux'])[1:-1].replace(', ','_') \
+            + '_mainu_' \
+                + str(config['params']['nb_hidden_u_aux'][-1]) + '_' \
+                + str(config['params']['nb_hidden_u_main'])[1:-1].replace(', ','_') \
+            + '_patience_' + str(config['params']['patience']) \
+            + '_seed_' + str(config['params']['seed']) \
+            + '.pt'
+
+    # ----------------------------------------
     #               OPTIMIZATION
     # ----------------------------------------
     # Loss
@@ -285,12 +306,12 @@ def train(config, comet_log, comet_project_name):
     comb_model.eval()
     min_loss, best_acc = mlu.eval_step(comb_model, device,
             valid_generator, len(valid_set), criterion, mus, sigmas, emb,
-            config['specifics']['task'])
+            config['specifics']['task'], config['specifics']['normalize'])
 
     print('baseline loss:',min_loss, 'baseline acc:', best_acc)
 
     # Save the baseline model
-    lu.save_model_params(config['specifics']['out_dir'], comb_model)
+    lu.save_model_params(config['specifics']['out_dir'], comb_model, filename=model_params_filename)
 
     # Patience: Nb epoch without improvement after which to stop training
     patience = 0
@@ -307,7 +328,7 @@ def train(config, comet_log, comet_project_name):
 
         epoch_loss, epoch_acc = mlu.train_step(comb_model, device, optimizer,
                 train_generator, len(train_set), criterion, mus, sigmas, emb,
-                config['specifics']['task'])
+                config['specifics']['task'], config['specifics']['normalize'])
 
         print('train loss:', epoch_loss, 'train acc:', epoch_acc, flush=True)
 
@@ -325,7 +346,7 @@ def train(config, comet_log, comet_project_name):
 
         epoch_loss, epoch_acc = mlu.eval_step(comb_model, device,
                 valid_generator, len(valid_set), criterion, mus, sigmas, emb,
-                config['specifics']['task'])
+                config['specifics']['task'], config['specifics']['normalize'])
 
         print('valid loss:', epoch_loss, 'valid acc:', epoch_acc,flush=True)
 
@@ -347,7 +368,7 @@ def train(config, comet_log, comet_project_name):
 
                 # Save model parameters (for later inference)
                 print('best validation acc achieved: {} (loss {}) at epoch {} saving model ...'.format(best_acc, epoch_loss, epoch))
-                lu.save_model_params(config['specifics']['out_dir'], comb_model)
+                lu.save_model_params(config['specifics']['out_dir'], comb_model, filename=model_params_filename)
         else:
             patience += 1
 
@@ -374,7 +395,7 @@ def train(config, comet_log, comet_project_name):
     #                 TEST
     # ----------------------------------------
     # Reload weights from early stoping
-    model_weights_path = os.path.join(config['specifics']['out_dir'], 'model_params.pt')
+    model_weights_path = os.path.join(config['specifics']['out_dir'], model_params_filename)
     comb_model.load_state_dict(torch.load(model_weights_path))
 
     # Put model in eval mode
@@ -384,7 +405,7 @@ def train(config, comet_log, comet_project_name):
     print('Testing model', flush=True)
     test_samples, test_ys, score, pred, acc = mlu.test_step(comb_model, device,
             test_generator, len(test_set), mus, sigmas, emb,
-            config['specifics']['task'])
+            config['specifics']['task'], config['specifics']['normalize'])
 
     print('Final accuracy:', str(acc), flush=True)
     print('total running time:', str(total_time), flush=True)
@@ -394,27 +415,28 @@ def train(config, comet_log, comet_project_name):
         experiment.log_metric("test accuracy", acc)
 
     # Save test results (model_predictions.npz)
-    print('Saving results', flush=True)
-    if config['specifics']['task'] == 'classification':
+    if not optimization_exp:
+        print('Saving results', flush=True)
+        if config['specifics']['task'] == 'classification':
+            with h5py.File(dataset_file, 'r') as f:
+                label_names = np.array(f['label_names']).astype(np.str_)
+
+            lu.save_results(config['specifics']['out_dir'],
+                    test_samples, test_ys, label_names, score.cpu(), pred.cpu())
+        elif config['specifics']['taks'] == 'regression':
+            print('TO DO')
+
+        # Save additional data (additional_data.npz)
+        print('saving additional results', flush=True)
+        train_samples = train_set.get_samples()
+        valid_samples = valid_set.get_samples()
         with h5py.File(dataset_file, 'r') as f:
-            label_names = np.array(f['label_names']).astype(np.str_)
+            snp_names = np.array(f['snp_names']).astype(np.str_)
 
-        lu.save_results(config['specifics']['out_dir'],
-                test_samples, test_ys, label_names, score.cpu(), pred.cpu())
-    elif config['specifics']['taks'] == 'regression':
-        print('TO DO')
-
-    # Save additional data (additional_data.npz)
-    print('saving additional results', flush=True)
-    train_samples = train_set.get_samples()
-    valid_samples = valid_set.get_samples()
-    with h5py.File(dataset_file, 'r') as f:
-        snp_names = np.array(f['snp_names']).astype(np.str_)
-
-    lu.save_additional_data(config['specifics']['out_dir'],
-                            train_samples, valid_samples, test_samples,
-                            test_ys, pred.cpu(), score.cpu(),
-                            label_names, snp_names, mus.cpu(), sigmas.cpu())
+        lu.save_additional_data(config['specifics']['out_dir'],
+                                train_samples, valid_samples, test_samples,
+                                test_ys, pred.cpu(), score.cpu(),
+                                label_names, snp_names, mus.cpu(), sigmas.cpu())
 
 
 def parse_args():
@@ -474,6 +496,13 @@ def parse_args():
                   'Default: %(default)s')
             )
 
+    # Input features normalization
+    parser.add_argument(
+            '--normalize',
+            action='store_true',
+            help='Use this flag to normalize input features.'
+            )
+
     parser.add_argument(
             '--preprocess-params',
             type=str,
@@ -515,6 +544,14 @@ def parse_args():
             '--comet-ml-project-name',
             type=str,
             help='Specific project were to send comet Experiment'
+            )
+
+    # Optimization process (do not save results)
+    parser.add_argument(
+            '--optimization',
+            action='store_true',
+            help=('Use this flag when in optimization process. '
+                  '(Config files created with optimize.py).')
             )
 
     return parser.parse_args()
