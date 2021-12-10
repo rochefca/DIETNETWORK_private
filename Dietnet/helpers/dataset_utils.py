@@ -231,13 +231,7 @@ def load_embedding(filename, which_fold):
     return emb
 
 
-def get_fold_data(which_fold, folds_indexes, data, prediction):
-    # Class labels identifier in hdf5 file (depends on prediction type)
-    if prediction == 'classification':
-        label = 'labels'
-    elif prediction == 'regression':
-        label = 'emb_labels'
-
+def get_fold_data(which_fold, folds_indexes, data, label='labels'):
     # Indices of each set for the fold (0:train, 1:valid, 2:test)
     fold_indexes = folds_indexes[which_fold]
     train_indexes = np.sort(fold_indexes[0]) # sort is a hdf5 requirement
