@@ -108,6 +108,16 @@ def save_results(out_dir, samples, labels, label_names, score, pred):
              label_names=label_names)
 
 
+def save_results_regression(out_dir, samples, labels, pred):
+    filename = 'model_predictions.npz'
+
+    print('Saving model predictions to %s' % os.path.join(out_dir, filename))
+
+    np.savez(os.path.join(out_dir, filename),
+             test_samples=samples,
+             test_labels=labels,
+             test_preds=pred)
+
 def save_results_external_dataset(out_dir, samples, label_names,
         score, pred, test_name):
     print('Saving model predictions to %s' % os.path.join(out_dir, test_name))

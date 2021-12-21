@@ -223,14 +223,15 @@ class CombinedModel(nn.Module):
         self.disc_net = Discrim_net2(n_feats, n_hidden_u_main, n_targets,
                                      param_init, input_dropout, eps,
                                      incl_bias, incl_softmax)
+        self.fatLayer_weights = None
 
 
     def forward(self, emb, x_batch, save_layers=False):
         # Forward pass in auxilliary net
         feat_emb_model_out = self.feat_emb(emb)
         # Forward pass in discrim net
-        fatLayer_weights = torch.transpose(feat_emb_model_out,1,0)
-        discrim_model_out = self.disc_net(x_batch, fatLayer_weights, save_layers)
+        self.fatLayer_weights = torch.transpose(feat_emb_model_out,1,0)
+        discrim_model_out = self.disc_net(x_batch, self.fatLayer_weights, save_layers)
 
         return discrim_model_out
 
