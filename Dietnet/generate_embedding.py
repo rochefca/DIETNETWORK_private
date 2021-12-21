@@ -30,7 +30,7 @@ def generate_embedding():
         (_,_,_,
          x_train, y_train, _,
          x_valid, y_valid, _,
-         _,_,_) = du.get_fold_data(fold, folds_indexes, data, args.prediction)
+         _,_,_) = du.get_fold_data(fold, folds_indexes, data, label=args.emb_class_label)
 
         # Embedding on train+valid sets
         if args.include_valid:
@@ -124,10 +124,10 @@ def parse_args():
             )
 
     parser.add_argument(
-            '--prediction',
-            choices=['classification', 'regression'],
-            default='classification',
-            help='Type of prediction'
+            '--emb-class-label',
+            default='labels',
+            help=('Key name in hdf5 dataset of class labels '
+                  'to use in embedding computation. Default: %(default)s')
             )
 
     parser.add_argument(
