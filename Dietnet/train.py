@@ -59,7 +59,8 @@ def main():
     specifics['dataset'] = args.dataset
     specifics['embedding'] = args.embedding
     specifics['normalize'] = args.normalize
-    specifics['preprocess_params'] = args.preprocess_params
+    #specifics['preprocess_params'] = args.preprocess_params
+    specifics['input_features_means'] = args.input_features_means
     specifics['task'] = args.task
     specifics['param_init'] = args.param_init
 
@@ -151,22 +152,23 @@ def train(config, comet_log, comet_project_name, optimization_exp):
         torch.cuda.manual_seed_all(seed)
 
     # ----------------------------------------
-    #           LOAD MEAN and SD
+    #        LOAD INPUT FEATURES MEANS
     # ----------------------------------------
-    print('loading preprocessing parameters')
+    print('loading input features mean')
 
     # Mean and sd per feature computed on training set
-    preprocess_params = np.load(os.path.join(
+    input_features_means = np.load(os.path.join(
         config['specifics']['exp_path'],
-        config['specifics']['preprocess_params'])
+        config['specifics']['input_features_means'])
         )
 
-    mus = preprocess_params['means_by_fold'][config['params']['fold']]
-    sigmas = preprocess_params['sd_by_fold'][config['params']['fold']]
+    mus = input_features_means['means_by_fold'][config['params']['fold']]
+    #sigmas = preprocess_params['sd_by_fold'][config['params']['fold']]
+    sigmas = None
 
     # Send mus and sigmans to device
     mus = torch.from_numpy(mus).float().to(device)
-    sigmas = torch.from_numpy(sigmas).float().to(device)
+    #sigmas = torch.from_numpy(sigmas).float().to(device)
 
     # ----------------------------------------
     #           LOAD FOLD INDEXES
@@ -649,6 +651,14 @@ def parse_args():
                   'Default: %(default)s')
             )
 
+    parser.add_argument(
+            '--input-features-means',
+            type=str,
+            default='input_features_means.npz',
+            help=('Filename of computed input features means. The means are '
+                  'used to replace missing genotypes. Default: %(default)s')
+            )
+
     # Input features normalization
     parser.add_argument(
             '--normalize',
@@ -656,13 +666,14 @@ def parse_args():
             help='Use this flag to normalize input features.'
             )
 
+    """
     parser.add_argument(
             '--preprocess-params',
             type=str,
             default='preprocessing_params.npz',
             help='Normalization parameters obtained with get_preprocessing_params.py'
             )
-
+    """
     # Task
     parser.add_argument(
             '--task',

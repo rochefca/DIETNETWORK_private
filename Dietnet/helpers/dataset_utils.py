@@ -306,18 +306,19 @@ def compute_norm_values(x):
     mask = (x >= 0)
 
     # Compute mean of every column (feature)
-    per_feature_mean = torch.sum(x*mask, dim=0) / torch.sum(mask, dim=0)
+    with torch.no_grad():
+        per_feature_mean = torch.sum(x*mask, dim=0) / torch.sum(mask, dim=0)
 
-    print('Computed per feature mean')
+        print('Computed per feature mean')
 
-    # S.d. of every column (feature)
-    per_feature_sd = torch.sqrt(
-            torch.sum((x*mask-mask*per_feature_mean)**2, dim=0) / \
-                    (torch.sum(mask, dim=0) - 1)
-                    )
-    per_feature_sd += 1e-6
+        # S.d. of every column (feature)
+        per_feature_sd = torch.sqrt(
+                torch.sum((x*mask-mask*per_feature_mean)**2, dim=0) / \
+                        (torch.sum(mask, dim=0) - 1)
+                        )
+        per_feature_sd += 1e-6
 
-    print('Computed per feature sd')
+        print('Computed per feature sd')
 
     return per_feature_mean, per_feature_sd
 
