@@ -102,6 +102,7 @@ def eval_step(comb_model, device, valid_generator,
             minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
 
     epoch_loss = np.array(minibatch_loss).sum()/set_size
+    #epoch_loss = np.array(minibatch_loss).mean()
 
     if task == 'classification':
         epoch_acc = np.array(minibatch_n_right).sum() / float(set_size)*100
@@ -114,8 +115,9 @@ def eval_step(comb_model, device, valid_generator,
 
 
 def test_step(comb_model, device, test_generator,
-        set_size, mus, sigmas, emb, task, normalize):
+        set_size, criterion, mus, sigmas, emb, task, normalize):
     # Saving data seen while looping through minibatches
+    minibatch_loss = []
     minibatch_n_right = [] #number of good classifications
     test_pred = torch.tensor([]).to(device) #prediction of each sample
     test_score = torch.tensor([]).to(device) #softmax values of each sample
@@ -145,6 +147,13 @@ def test_step(comb_model, device, test_generator,
         # Forward pass
         comb_model_out = comb_model(emb, x_batch)
 
+        # Loss
+        loss = criterion(comb_model_out, y_batch)
+
+        # Monitoring : Minibatch
+        weighted_loss = loss.item()*len(y_batch) # for unequal minibatches
+        minibatch_loss.append(weighted_loss)
+
         # Predictions
         if task == 'classification':
             score, pred = get_predictions(comb_model_out)
@@ -156,6 +165,9 @@ def test_step(comb_model, device, test_generator,
 
         elif task == 'regression':
             test_pred = torch.cat((test_pred,comb_model_out.detach()), dim=0)
+
+    test_loss = np.array(minibatch_loss).sum()/set_size
+    #test_loss = np.array(minibatch_loss).mean()
 
     # Test results to return
     if task == 'classification':
@@ -171,7 +183,7 @@ def test_step(comb_model, device, test_generator,
                 test_pred,
                 torch.from_numpy(test_ys).to(device).unsqueeze(1)
                 )
-        test_results = (test_pred, r)
+        test_results = (test_loss, test_pred, r)
 
     return test_samples, test_ys, test_results
 

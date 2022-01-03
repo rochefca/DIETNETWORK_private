@@ -67,6 +67,7 @@ def main():
     config['specifics'] = specifics
 
     # This is the full configurations for the training
+    print('\n --- Experiment hyperparameters and specifics')
     pprint.pprint(config)
 
     # Save experiment configurations (out_dir/full_config.log)
@@ -93,6 +94,9 @@ def main():
 
 
 def train(config, comet_log, comet_project_name, optimization_exp):
+    # Monitoring time to execute the whole training function
+    whole_exp_start_time = time.time()
+
     # ----------------------------------------
     #       EXPERIMENT IDENTIFIER
     # ----------------------------------------
@@ -136,6 +140,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     # ----------------------------------------
     #               SET DEVICE
     # ----------------------------------------
+    print('\n --- Setting device ---')
     print('Cuda available:', torch.cuda.is_available())
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print('device:', device)
@@ -154,7 +159,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     # ----------------------------------------
     #        LOAD INPUT FEATURES MEANS
     # ----------------------------------------
-    print('loading input features mean')
+    print('\n --- Loading input features mean ---')
 
     # Mean and sd per feature computed on training set
     input_features_means = np.load(os.path.join(
@@ -173,7 +178,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     # ----------------------------------------
     #           LOAD FOLD INDEXES
     # ----------------------------------------
-    print('Loading fold indexes split into train, valid, test sets')
+    print('\n --- Loading fold indexes of train, valid and test sets ---')
     all_folds_idx = np.load(os.path.join(
         config['specifics']['exp_path'],
         config['specifics']['partition']),
@@ -184,7 +189,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     # ----------------------------------------
     #       MAKE TRAIN, VALID, TEST SETS
     # ----------------------------------------
-    print('Making train, valid, test sets classes')
+    print('\n --- Making train, valid, test sets classes ---')
 
     # Dataset hdf5 file
     dataset_file = os.path.join(
@@ -210,7 +215,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     # ----------------------------------------
     #             LOAD EMBEDDING
     # ----------------------------------------
-    print('Loading embedding')
+    print('\n --- Loading embedding ---')
     emb = du.load_embedding(os.path.join(
         config['specifics']['exp_path'],
         config['specifics']['embedding']),
@@ -227,6 +232,8 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     # ----------------------------------------
     #               MAKE MODEL
     # ----------------------------------------
+    print('\n --- Initiating the model ---')
+
     # Aux net input size (nb of emb features)
     if len(emb.size()) == 1:
         n_feats_emb = 1 # input of aux net, 1 value per SNP
@@ -250,7 +257,6 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     print('n_targets:', n_targets)
 
     # Model init
-    print('Initiating the model')
     model_init_start_time = time.time()
     comb_model = model.CombinedModel(
             n_feats=n_feats_emb,
@@ -295,7 +301,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     # ----------------------------------------
     #             BATCH GENERATORS
     # ----------------------------------------
-    print('Making batch generators')
+    print('\n --- Making batch generators ---')
     batch_gen_start_time = time.time()
 
     batch_size = config['params']['batch_size']
@@ -316,13 +322,6 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     # ----------------------------------------
     #          TRAINING LOOP SET UP
     # ----------------------------------------
-    """
-    # Monitoring: Epoch loss and accuracy setup
-    train_losses = []
-    train_acc = []
-    valid_losses = []
-    valid_acc = []
-    """
     # Monitoring set up: Epoch
     train_results_by_epoch = []
     valid_results_by_epoch = []
@@ -330,18 +329,8 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     # File where to save model params
     model_params_filename = 'model_params_' + exp_identifier + '.pt'
 
-    """
-    # Baseline
-    comb_model.eval()
-    min_loss, best_acc = mlu.eval_step(comb_model, device,
-            valid_generator, len(valid_set), criterion, mus, sigmas, emb,
-            config['specifics']['task'], config['specifics']['normalize'])
-
-    print('baseline loss:',min_loss, 'baseline acc:', best_acc)
-    """
-
     # Baseline (and best result at this point)
-    print('Computing baseline (forward pass in model)')
+    print('\n --- Computing baseline (forward pass in model with valid set) ---')
     baseline_start_time = time.time()
     baseline = mlu.eval_step(comb_model, device,
             valid_generator, len(valid_set), criterion, mus, sigmas, emb,
@@ -405,22 +394,6 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
         # ---Training---
         comb_model.train()
-
-        """
-        epoch_loss, epoch_acc = mlu.train_step(comb_model, device, optimizer,
-                train_generator, len(train_set), criterion, mus, sigmas, emb,
-                config['specifics']['task'], config['specifics']['normalize'])
-
-        print('train loss:', epoch_loss, 'train acc:', epoch_acc, flush=True)
-
-        train_losses.append(epoch_loss)
-        train_acc.append(epoch_acc)
-
-        # Comet
-        if comet_log:
-            experiment.log_metric("train_accuracy", epoch_acc, epoch=epoch, step=epoch)
-            experiment.log_metric("train_loss", epoch_loss, epoch=epoch, step=epoch)
-        """
 
         epoch_train_result = mlu.train_step(comb_model, device, optimizer,
                 train_generator, len(train_set), criterion, mus, sigmas, emb,
@@ -545,7 +518,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     """
 
     test_samples, test_ys, test_results = mlu.test_step(comb_model, device,
-            test_generator, len(test_set), mus, sigmas, emb,
+            test_generator, len(test_set), criterion, mus, sigmas, emb,
             config['specifics']['task'], config['specifics']['normalize'])
 
     # Monitoring time
@@ -559,10 +532,12 @@ def train(config, comet_log, comet_project_name, optimization_exp):
             experiment.log_metric("test accuracy", test_results[2])
 
     elif config['specifics']['task'] == 'regression':
+        print('Test loss:', str(test_results[0]), flush=True)
         print('Pearson correlation between outputs and targets:',
-              str(test_results[1]), flush=True)
+              str(test_results[2]), flush=True)
 
         if comet_log:
+            experiment.log_metric("Test loss", test_results[0])
             experiment.log_metric("Pearson_r", test_results[1])
 
     # Save test results (model_predictions.npz)
@@ -577,7 +552,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
         elif config['specifics']['task'] == 'regression':
             lu.save_results_regression(config['specifics']['out_dir'],
-                    test_samples, test_ys, test_results[0].detach().squeeze().cpu())
+                    test_samples, test_ys, test_results[1].detach().squeeze().cpu())
 
         # Save additional data (additional_data.npz)
         print('saving additional results', flush=True)
@@ -593,6 +568,10 @@ def train(config, comet_log, comet_project_name, optimization_exp):
                                 test_ys, pred.cpu(), score.cpu(),
                                 label_names, snp_names, mus.cpu(), sigmas.cpu())
         """
+
+        print('\n--- End of execution ---')
+        print('Executed training process in {} seconds'.format(
+            time.time() - whole_exp_start_time))
 
 def parse_args():
     parser = argparse.ArgumentParser(

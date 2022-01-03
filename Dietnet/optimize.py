@@ -133,7 +133,7 @@ def main():
         script += '--dataset ' + args.dataset + ' \\\n'
         script += '--partition ' + args.partition + ' \\\n'
         script += '--embedding ' + args.embedding + ' \\\n'
-        script += '--preprocess-params ' + args.preprocess_params + ' \\\n'
+        script += '--input-features-means ' + args.input_features_means + ' \\\n'
         script += '--task ' + args.task + ' \\\n'
         script += '--config ' + config_filename + ' \\\n'
         script += '--comet-ml ' + ' \\\n'
@@ -223,6 +223,14 @@ def parse_args():
                   'Default: %(default)s')
             )
 
+    parser.add_argument(
+            '--input-features-means',
+            type=str,
+            default='input_features_means.npz',
+            help=('Filename of computed input features means. The means are '
+                  'used to replace missing genotypes. Default: %(default)s')
+            )
+
     # Input features normalization
     parser.add_argument(
             '--normalize',
@@ -230,13 +238,14 @@ def parse_args():
             help='Use this flag to normalize input features.'
             )
 
+    """
     parser.add_argument(
             '--preprocess-params',
             type=str,
             default='preprocessing_params.npz',
             help='Normalization parameters obtained with get_preprocessing_params.py'
             )
-
+    """
     # Task
     parser.add_argument(
             '--task',
