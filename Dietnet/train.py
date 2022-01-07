@@ -9,7 +9,11 @@ import h5py
 
 import numpy as np
 
-from comet_ml import Experiment, Optimizer
+try:
+    from comet_ml import Experiment, Optimizer
+except:
+    # cannot load comet. Proceed...
+    Experiment, Optimizer = None, None
 
 import torch
 import torch.nn as nn
@@ -20,6 +24,7 @@ import helpers.dataset_utils as du
 import helpers.model as model
 import helpers.mainloop_utils as mlu
 import helpers.log_utils as lu
+from modelHandlers import dietNetworkHandler
 
 
 def main():
@@ -52,6 +57,7 @@ def main():
 
     # Specifics
     specifics = {}
+    specifics['model'] = args.model
     specifics['exp_path'] = args.exp_path
     specifics['exp_name'] = args.exp_name
     specifics['out_dir'] = out_dir
@@ -206,74 +212,13 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     print('valid set:', len(valid_set))
     test_set = du.FoldDataset(fold_idx[2])
     print('test set:', len(test_set))
-
-    # ----------------------------------------
-    #             LOAD EMBEDDING
-    # ----------------------------------------
-    print('Loading embedding')
-    emb = du.load_embedding(os.path.join(
-        config['specifics']['exp_path'],
-        config['specifics']['embedding']),
-        config['params']['fold'])
-
-    # Send to device
-    emb = emb.to(device)
-    emb = emb.float()
-
-    # Normalize embedding
-    emb_norm = (emb ** 2).sum(0) ** 0.5
-    emb = emb/emb_norm
-
-    # ----------------------------------------
-    #               MAKE MODEL
-    # ----------------------------------------
-    # Aux net input size (nb of emb features)
-    if len(emb.size()) == 1:
-        n_feats_emb = 1 # input of aux net, 1 value per SNP
-        emb = torch.unsqueeze(emb, dim=1) # match size in Linear fct (nb_snpsx1)
+    
+    #  Model now encapsulated by modelHandler object
+    if config['specifics']['model'] == 'Dietnet':
+        mod_handler = dietNetworkHandler(config, device)
     else:
-        n_feats_emb = emb.size()[1] # input of aux net
-
-    # Main net input size (nb of features)
-    n_feats = emb.size()[0] # input of main net
-
-    # Main net output size (nb targets)
-    if config['specifics']['task'] == 'classification':
-        with h5py.File(dataset_file, 'r') as f:
-            n_targets = len(f['label_names'])
-    elif config['specifics']['task'] == 'regression':
-        n_targets = 1
-
-    print('\n***Nb features in models***')
-    print('n_feats_emb:', n_feats_emb)
-    print('n_feats:', n_feats)
-    print('n_targets:', n_targets)
-
-    # Model init
-    print('Initiating the model')
-    model_init_start_time = time.time()
-    comb_model = model.CombinedModel(
-            n_feats=n_feats_emb,
-            n_hidden_u_aux=config['params']['nb_hidden_u_aux'],
-            n_hidden_u_main=config['params']['nb_hidden_u_aux'][-1:] \
-                            +config['params']['nb_hidden_u_main'],
-            n_targets=n_targets,
-            param_init=config['specifics']['param_init'],
-            input_dropout=config['params']['input_dropout'])
-    print('Model initiated in: ', time.time()-model_init_start_time, 'seconds')
-
-    # Data parallel: this is not implemented yet
-    if torch.cuda.device_count() > 1:
-        print("Let's use", torch.cuda.device_count(), "GPUs!")
-        comb_model.disc_net = nn.DataParallel(comb_model.disc_net)
-
-
-    # Note: runs script in single GPU mode only!
-    print('Sending model to device')
-    comb_model.to(device)
-    #print(summary(comb_model.feat_emb, input_size=(294427,1,1,78)))
-    #print(summary(comb_model.disc_net, input_size=[(138,1,1,294427),(100,294427)]))
-
+        raise Exception('{} Not implemented yet!'.format(config['specifics']['model']))
+    
     # ----------------------------------------
     #               OPTIMIZATION
     # ----------------------------------------
@@ -287,7 +232,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
     # Optimizer
     lr = config['params']['learning_rate']
-    optimizer = torch.optim.Adam(comb_model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(mod_handler.get_trainable_parameters(), lr=lr)
 
     # Max nb of epochs
     n_epochs = config['params']['epochs']
@@ -343,8 +288,9 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     # Baseline (and best result at this point)
     print('Computing baseline (forward pass in model)')
     baseline_start_time = time.time()
-    baseline = mlu.eval_step(comb_model, device,
-            valid_generator, len(valid_set), criterion, mus, sigmas, emb,
+
+    baseline = mlu.eval_step(mod_handler, device,
+            valid_generator, len(valid_set), criterion, mus, sigmas,
             config['specifics']['task'], config['specifics']['normalize'])
 
     if config['specifics']['task'] == 'classification':
@@ -357,38 +303,11 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     print('Baseline computed in:', time.time()-baseline_start_time, 'seconds')
 
     # Save the baseline model
-    lu.save_model_params(config['specifics']['out_dir'], comb_model, filename=model_params_filename)
+    mod_handler.save(config['specifics']['out_dir'], filename=model_params_filename)
 
     # Log weights initialisation values to comet-ml
     if comet_log:
-        # Layers in aux net
-        for i,layer in enumerate(comb_model.feat_emb.hidden_layers):
-            layer_name = 'auxNet_weights_layer' + str(i)
-            experiment.log_histogram_3d(layer.weight.cpu().detach().numpy(),
-                                        name=layer_name,
-                                        step=0)
-            """
-            layer_name = 'auxNet_bias_layer' + str(i)
-            experiment.log_histogram_3d(layer.bias.cpu().detach().numpy(),
-                                        name=layer_name,
-                                        step=0)
-            """
-
-        # Layers in main net
-        experiment.log_histogram_3d(
-                comb_model.fatLayer_weights.cpu().detach().numpy(),
-                name='mainNet_fatLayer',
-                step=0)
-
-        for i,layer in enumerate(comb_model.disc_net.hidden_layers):
-            layer_name = 'mainNet_layer' + str(i+1)
-            experiment.log_histogram_3d(layer.weight.cpu().detach().numpy(),
-                                        name=layer_name,
-                                        step=0)
-            layer_name = 'mainNet_bias_layer' + str(i)
-            experiment.log_histogram_3d(layer.bias.cpu().detach().numpy(),
-                                        name=layer_name,
-                                        step=0)
+        mod_handler.log_weight_initialization(experiment)
 
     # Patience: Nb epoch without improvement after which to stop training
     patience = 0
@@ -404,7 +323,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
         start_time = time.time()
 
         # ---Training---
-        comb_model.train()
+        mod_handler.train_mode()
 
         """
         epoch_loss, epoch_acc = mlu.train_step(comb_model, device, optimizer,
@@ -422,8 +341,8 @@ def train(config, comet_log, comet_project_name, optimization_exp):
             experiment.log_metric("train_loss", epoch_loss, epoch=epoch, step=epoch)
         """
 
-        epoch_train_result = mlu.train_step(comb_model, device, optimizer,
-                train_generator, len(train_set), criterion, mus, sigmas, emb,
+        epoch_train_result = mlu.train_step(mod_handler, device, optimizer,
+                train_generator, len(train_set), criterion, mus, sigmas,
                 config['specifics']['task'], config['specifics']['normalize'])
 
         train_results_by_epoch.append(epoch_train_result)
@@ -444,10 +363,10 @@ def train(config, comet_log, comet_project_name, optimization_exp):
                 experiment.log_metric("train_loss", epoch_train_result[0], epoch=epoch, step=epoch)
 
         # ---Validation---
-        comb_model.eval()
+        mod_handler.eval_mode()
 
-        epoch_valid_result = mlu.eval_step(comb_model, device,
-                valid_generator, len(valid_set), criterion, mus, sigmas, emb,
+        epoch_valid_result = mlu.eval_step(mod_handler, device,
+                valid_generator, len(valid_set), criterion, mus, sigmas,
                 config['specifics']['task'], config['specifics']['normalize'])
 
         valid_results_by_epoch.append(epoch_valid_result)
@@ -524,10 +443,10 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
     # Reload weights from early stoping
     model_weights_path = os.path.join(config['specifics']['out_dir'], model_params_filename)
-    comb_model.load_state_dict(torch.load(model_weights_path))
+    mod_handler.load(torch.load(model_weights_path))
 
     # Put model in eval mode
-    comb_model.eval()
+    mod_handler.eval_mode()
 
     # Test step
     print('Testing model', flush=True)
@@ -544,8 +463,8 @@ def train(config, comet_log, comet_project_name, optimization_exp):
         experiment.log_metric("test accuracy", acc)
     """
 
-    test_samples, test_ys, test_results = mlu.test_step(comb_model, device,
-            test_generator, len(test_set), mus, sigmas, emb,
+    test_samples, test_ys, test_results = mlu.test_step(mod_handler, device,
+            test_generator, len(test_set), mus, sigmas,
             config['specifics']['task'], config['specifics']['normalize'])
 
     # Monitoring time
@@ -622,6 +541,14 @@ def parse_args():
             type=str,
             default='config.yaml',
             help='Yaml file of hyperparameter. Default: %(default)s'
+            )
+    
+    parser.add_argument(
+            '--model',
+            type=str,
+            required=True,
+            default='Dietnet',
+            help='Model architecture (default: Dietnet)'
             )
 
     parser.add_argument(
