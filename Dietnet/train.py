@@ -84,6 +84,7 @@ def main():
             + '_mainu_' \
                 + str(config['params']['nb_hidden_u_aux'][-1]) + '_' \
                 + str(config['params']['nb_hidden_u_main'])[1:-1].replace(', ','_') \
+            + '_uniform_init_limit_' + str(config['params']['uniform_init_limit']) \
             + '_patience_' + str(config['params']['patience']) \
             + '_seed_' + str(config['params']['seed']) \
             + '.pt'
@@ -265,6 +266,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
                             +config['params']['nb_hidden_u_main'],
             n_targets=n_targets,
             param_init=config['specifics']['param_init'],
+            aux_uniform_init_limit = config['params']['uniform_init_limit'],
             input_dropout=config['params']['input_dropout'])
     print('Model initiated in: ', time.time()-model_init_start_time, 'seconds')
 
@@ -470,9 +472,18 @@ def train(config, comet_log, comet_project_name, optimization_exp):
         if patience >= max_patience:
             has_early_stoped = True
             n_epochs = epoch - patience
+
+            # log best validation results to comet
+            if comet.log:
+                if config['specifics']['task'] == 'classification':
+                    experiment.log_metric("best_valid_loss", best_result[0])
+                    experiment.log_metric("best_valid_acc", best_result[1])
+
+                if config['specifics']['task'] == 'regression':
+                    experiment.log_metric("best_valid_loss", best_result[0])
             break # exit training loop
 
-        # ---Anneal laerning rate---
+        # ---Anneal learning rate---
         for param_group in optimizer.param_groups:
             param_group['lr'] = \
                     param_group['lr'] * config['params']['learning_rate_annealing']
@@ -548,7 +559,8 @@ def train(config, comet_log, comet_project_name, optimization_exp):
                 label_names = np.array(f['label_names']).astype(np.str_)
 
             lu.save_results(config['specifics']['out_dir'],
-                    test_samples, test_ys, label_names, score.cpu(), pred.cpu())
+                    test_samples, test_ys, label_names,
+                    test_results[0].cpu(), test_results[1].cpu())
 
         elif config['specifics']['task'] == 'regression':
             lu.save_results_regression(config['specifics']['out_dir'],

@@ -52,6 +52,7 @@ def main():
         config['input_dropout'] = experiment.get_parameter('input_dropout')
         config['learning_rate'] = experiment.get_parameter('learning_rate')
         config['learning_rate_annealing'] = experiment.get_parameter('learning_rate_annealing')
+        config['uniform_init_limit'] = experiment.get_parameter('uniform_init_limit')
 
         print(experiment.get_parameter('nb_hidden_u_aux'))
         print(type(experiment.get_parameter('nb_hidden_u_aux')))
