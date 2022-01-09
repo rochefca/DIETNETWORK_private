@@ -176,3 +176,80 @@ class dietNetworkHandler(modelHandler):
 
     def eval_mode(self):
         self.model.eval()
+
+
+class MlpHandler(modelHandler):
+
+    def __init__(self, config, device):
+
+        # ----------------------------------------
+        #               MAKE MODEL
+        # ----------------------------------------
+
+        # Main net input size (nb of features)
+        n_feats = config['params']['num_input_features']
+        n_hidden_u = config['params']['n_hidden_u']
+
+        # Main net output size (nb targets)
+        if config['specifics']['task'] == 'classification':
+            with h5py.File(dataset_file, 'r') as f:
+                n_targets = len(f['label_names'])
+        elif config['specifics']['task'] == 'regression':
+            n_targets = 1
+
+        print('\n***Nb features in models***')
+        print('n_feats:', n_feats)
+        print('n_targets:', n_targets)
+
+        # Model init
+        print('Initiating the model')
+        model_init_start_time = time.time()
+        linear_model = model.Mlp(
+                n_feats=n_feats,
+                n_hidden_u=n_hidden_u,
+                n_targets=n_targets,
+                input_dropout=config['params']['input_dropout'])
+        print('Model initiated in: ', time.time()-model_init_start_time, 'seconds')
+
+        # Data parallel: this is not implemented yet
+        if torch.cuda.device_count() > 1:
+            print("Let's use", torch.cuda.device_count(), "GPUs!")
+            linear_model = nn.DataParallel(linear_model)
+
+        # Note: runs script in single GPU mode only!
+        print('Sending model to device')
+        linear_model.to(device)
+        #print(summary(comb_model.feat_emb, input_size=(294427,1,1,78)))
+        #print(summary(comb_model.disc_net, input_size=[(138,1,1,294427),(100,294427)]))
+
+        self.model = linear_model
+
+    def get_trainable_parameters(self):
+        """
+        Get trainable parameters (for torch optimizer)
+        """
+        return self.model.parameters()
+    
+    def forwardpass(self, x):
+        return self.model(x)
+    
+    def save(self, out_dir, filename):
+        lu.save_model_params(out_dir, self.model, filename)
+    
+    def load(self, torch_weight_dict):
+        self.model.load_state_dict(torch_weight_dict)
+        
+    def log_weight_initialization(self, experiment):
+        # Log weights initialisation values to comet-ml
+
+        # Layers in net
+        for i,layer in enumerate(self.model):
+            layer_name = 'weights_layer' + str(i)
+            experiment.log_histogram_3d(layer.weight.cpu().detach().numpy(),
+                                        name=layer_name,
+                                        step=0)
+    def train_mode(self):
+        self.model.train()
+
+    def eval_mode(self):
+        self.model.eval()

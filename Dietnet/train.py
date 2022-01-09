@@ -24,7 +24,7 @@ import helpers.dataset_utils as du
 import helpers.model as model
 import helpers.mainloop_utils as mlu
 import helpers.log_utils as lu
-from modelHandlers import dietNetworkHandler
+from modelHandlers import dietNetworkHandler, MlpHandler
 
 
 def main():
@@ -78,20 +78,33 @@ def main():
     # Save experiment configurations (out_dir/full_config.log)
     if not args.optimization:
         lu.save_exp_params(config['specifics']['out_dir'],'full_config.log', config)
-
-    exp_name = 'model_params' \
-            + '_epochs_' + str(config['params']['epochs']) \
-            + '_inpdrop_' + str(config['params']['input_dropout']) \
-            + '_lr_' + str(config['params']['learning_rate']) \
-            + '_lra_' + str(config['params']['learning_rate_annealing']) \
-            + '_auxu_' \
-                + str(config['params']['nb_hidden_u_aux'])[1:-1].replace(', ','_') \
-            + '_mainu_' \
-                + str(config['params']['nb_hidden_u_aux'][-1]) + '_' \
-                + str(config['params']['nb_hidden_u_main'])[1:-1].replace(', ','_') \
-            + '_patience_' + str(config['params']['patience']) \
-            + '_seed_' + str(config['params']['seed']) \
-            + '.pt'
+    
+    if args.model == 'Dietnet':
+        exp_name = 'model_params' \
+                + '_epochs_' + str(config['params']['epochs']) \
+                + '_inpdrop_' + str(config['params']['input_dropout']) \
+                + '_lr_' + str(config['params']['learning_rate']) \
+                + '_lra_' + str(config['params']['learning_rate_annealing']) \
+                + '_auxu_' \
+                    + str(config['params']['nb_hidden_u_aux'])[1:-1].replace(', ','_') \
+                + '_mainu_' \
+                    + str(config['params']['nb_hidden_u_aux'][-1]) + '_' \
+                    + str(config['params']['nb_hidden_u_main'])[1:-1].replace(', ','_') \
+                + '_patience_' + str(config['params']['patience']) \
+                + '_seed_' + str(config['params']['seed']) \
+                + '.pt'
+    elif args.model == 'Mlp':
+        exp_name = 'model_params' \
+                + '_epochs_' + str(config['params']['epochs']) \
+                + '_inpdrop_' + str(config['params']['input_dropout']) \
+                + '_lr_' + str(config['params']['learning_rate']) \
+                + '_lra_' + str(config['params']['learning_rate_annealing']) \
+                + '_num_input_features_' + str(config['params']['num_input_features']) \
+                + '_mlp_' \
+                    + str(config['params']['n_hidden_u'])[1:-1].replace(', ','_') \
+                + '_patience_' + str(config['params']['patience']) \
+                + '_seed_' + str(config['params']['seed']) \
+                + '.pt'
 
 
     # Training
@@ -103,17 +116,30 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     #       EXPERIMENT IDENTIFIER
     # ----------------------------------------
     # Experiment identifier for naming files
-    exp_identifier = 'auxu_' \
+    if config['specifics']['model'] == 'Dietnet':
+        exp_identifier = 'auxu_' \
                 + str(config['params']['nb_hidden_u_aux'])[1:-1].replace(', ','_') \
-            + '_mainu_' \
-                + str(config['params']['nb_hidden_u_aux'][-1]) + '_' \
-                + str(config['params']['nb_hidden_u_main'])[1:-1].replace(', ','_') \
-            + '_lr_' + str(config['params']['learning_rate']) \
-            + '_lra_' + str(config['params']['learning_rate_annealing']) \
-            + '_epochs_' + str(config['params']['epochs']) \
-            + '_patience_' + str(config['params']['patience']) \
-            + '_inpdrop_' + str(config['params']['input_dropout']) \
-            + '_seed_' + str(config['params']['seed']) \
+                + '_mainu_' \
+                    + str(config['params']['nb_hidden_u_aux'][-1]) + '_' \
+                    + str(config['params']['nb_hidden_u_main'])[1:-1].replace(', ','_') \
+                + '_lr_' + str(config['params']['learning_rate']) \
+                + '_lra_' + str(config['params']['learning_rate_annealing']) \
+                + '_epochs_' + str(config['params']['epochs']) \
+                + '_patience_' + str(config['params']['patience']) \
+                + '_inpdrop_' + str(config['params']['input_dropout']) \
+                + '_seed_' + str(config['params']['seed'])
+    elif config['specifics']['model'] == 'Mlp':
+        exp_identifier = 'num_input_features_' \
+                + str(config['params']['num_input_features']) \
+                + '_mlp_' \
+                    + str(config['params']['n_hidden_u'])[1:-1].replace(', ','_') \
+                + '_lr_' + str(config['params']['learning_rate']) \
+                + '_lra_' + str(config['params']['learning_rate_annealing']) \
+                + '_epochs_' + str(config['params']['epochs']) \
+                + '_patience_' + str(config['params']['patience']) \
+                + '_inpdrop_' + str(config['params']['input_dropout']) \
+                + '_seed_' + str(config['params']['seed'])
+
 
     # ----------------------------------------
     #               COMET PROJECT
@@ -216,6 +242,8 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     #  Model now encapsulated by modelHandler object
     if config['specifics']['model'] == 'Dietnet':
         mod_handler = dietNetworkHandler(config, device)
+    elif config['specifics']['model'] == 'Mlp':
+        mod_handler = MlpHandler(config, device)
     else:
         raise Exception('{} Not implemented yet!'.format(config['specifics']['model']))
     
@@ -546,7 +574,7 @@ def parse_args():
     parser.add_argument(
             '--model',
             type=str,
-            required=True,
+            choices=['Dietnet', 'Mlp'],
             default='Dietnet',
             help='Model architecture (default: Dietnet)'
             )
