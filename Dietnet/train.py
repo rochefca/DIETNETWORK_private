@@ -24,7 +24,7 @@ import helpers.dataset_utils as du
 import helpers.model as model
 import helpers.mainloop_utils as mlu
 import helpers.log_utils as lu
-from modelHandlers import dietNetworkHandler, MlpHandler
+from helpers.model_handlers import dietNetworkHandler, MlpHandler
 
 
 def main():

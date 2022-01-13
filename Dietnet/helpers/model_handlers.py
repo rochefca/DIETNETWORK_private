@@ -14,10 +14,10 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
-import helpers.dataset_utils as du
-import helpers.model as model
-import helpers.mainloop_utils as mlu
-import helpers.log_utils as lu
+import dataset_utils as du
+import model as model
+import mainloop_utils as mlu
+import log_utils as lu
 
 
 class modelHandler:
