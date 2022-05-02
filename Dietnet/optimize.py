@@ -87,6 +87,7 @@ def main():
                 + '_mainu_' \
                     + str(config['nb_hidden_u_aux'][-1]) + '_' \
                     + str(config['nb_hidden_u_main'])[1:-1].replace(', ','_') \
+                + '_uniform_init_limit_' + str(config['uniform_init_limit']) \
                 + '_patience_' + str(config['patience']) \
                 + '_seed_' + str(config['seed'])
 

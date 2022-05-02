@@ -16,6 +16,8 @@ def get_preprocessing_params():
     start_time = time.time()
     args = parse_args()
 
+    mean_only = args.mean_only
+
     # Load data
     data = h5py.File(os.path.join(args.exp_path,args.dataset))
     folds_indexes = du.load_folds_indexes(
@@ -23,6 +25,7 @@ def get_preprocessing_params():
             )
 
     means_by_fold = []
+    sds_by_fold = []
     for fold in range(len(folds_indexes)):
         print('Computing preprocessing parameters of fold', str(fold))
         # Get fold inputs (x)
@@ -37,21 +40,29 @@ def get_preprocessing_params():
         #x_train = torch.from_numpy(x_train)
 
         if args.parallel_loading:
-            # Compute mean of every features in parallel
+            # Compute statistics of every features in parallel
             ncpus = args.ncpus
-            print('Computing input features means in parallel using '
+            print('Computing input features statistics in parallel using '
                   '{} processes'.format(ncpus))
             pool = mp.Pool(processes=ncpus) #this starts ncpus nb of processes
 
             # Results that will be returned by processes
             results = []
 
-            # The mean of every snp feature is computed by a different process
+            # The statistics of every snp feature is computed by a different process
             nb_snps = x_train.shape[1]
             for i in range(nb_snps):
-                results.append(
-                        pool.apply_async(
-                            compute_feature_mean, args=(i, x_train[:,i])))
+                # Compute snps mean
+                if mean_only :
+                    results.append(
+                            pool.apply_async(
+                                compute_feature_mean, args=(i, x_train[:,i])))
+
+                # Compute mean and standard deviation (sd)
+                else:
+                    results.append(
+                            pool.apply_async(
+                                compute_feature_mean_and_sd, args=(i, x_train[:,i])))
 
             # Get order (snp nb) and mean of features from multiprocess results
             print('Computed mean of every feature, getting the results')
@@ -68,7 +79,12 @@ def get_preprocessing_params():
             # Ordered means
             means = results_values[:,1][ordered_idx]
 
+            # Ordered sd
+            if not mean_only:
+                sds = results_values[:,2][ordered_idx]
+
             print(means)
+            print(sds)
 
 
         else:
@@ -76,13 +92,20 @@ def get_preprocessing_params():
             means = du.compute_norm_values(x_train)
 
         means_by_fold.append(means)
+        sds_by_fold.append(sds)
 
     data.close()
 
     # Save
-    print('Saving input features mean to', os.path.join(args.exp_path,args.out))
-    np.savez(os.path.join(args.exp_path,args.out),
-             means_by_fold=means_by_fold)
+    print('Saving input features statictics to', os.path.join(args.exp_path,args.out))
+    if mean_only:
+        np.savez(os.path.join(args.exp_path,args.out),
+                means_by_fold=means_by_fold)
+
+    else:
+        np.savez(os.path.join(args.exp_path,args.out),
+                means_by_fold=means_by_fold,
+                sd_by_fold=sds_by_fold)
 
     end_time=time.time()
     print('End of execution. Execution time:', end_time-start_time, 'seconds')
@@ -90,6 +113,7 @@ def get_preprocessing_params():
 
 def compute_all_features_mean():
     pass
+
 
 def compute_feature_mean(i, x):
     """
@@ -105,6 +129,28 @@ def compute_feature_mean(i, x):
     mean = np.sum(x*mask) / np.sum(mask)
 
     return (i,mean)
+
+
+def compute_feature_mean_and_sd(i, x):
+    """
+    i is the snp nb (from 0 to nb_snps-1)
+    x is the vector of genotypes for the snp (dim : nb_samples x 1)
+    """
+    # Compute mean
+    _,mean = compute_feature_mean(i,x)
+
+    # --- Compute sd ---
+    mask = (x >= 0) #set missing values (-1) to False
+
+    numerator = np.sum((x*mask - mean*mask)**2)
+
+    denominator = np.sum(mask) - 1
+
+    sd = np.sqrt(numerator/denominator)
+
+    sd += 1e-6
+
+    return (i,mean,sd)
 
 
 def parse_args():
@@ -140,6 +186,14 @@ def parse_args():
                   'Default: %(default)s')
             )
 
+    # Which statistic tom compute (mean or mean+sd)
+    parser.add_argument(
+            '--mean-only',
+            action='store_true',
+            help=('Use this flag to compute only input features means '
+                  'and not the standard deviations')
+            )
+
     # Parallel computation
     parser.add_argument(
             '--parallel-loading',
@@ -157,7 +211,7 @@ def parse_args():
     parser.add_argument(
             '--out',
             type=str,
-            default='input_features_means.npz',
+            default='input_features_statistics.npz',
             help='Output filename. Default: %(default)s'
             )
 

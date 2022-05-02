@@ -59,7 +59,6 @@ def main():
     specifics['dataset'] = args.dataset
     specifics['embedding'] = args.embedding
     specifics['normalize'] = args.normalize
-    #specifics['preprocess_params'] = args.preprocess_params
     specifics['input_features_means'] = args.input_features_means
     specifics['task'] = args.task
     specifics['param_init'] = args.param_init
@@ -110,6 +109,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
             + '_lr_' + str(config['params']['learning_rate']) \
             + '_lra_' + str(config['params']['learning_rate_annealing']) \
             + '_epochs_' + str(config['params']['epochs']) \
+            + '_uniform_init_limit_' + str(config['params']['uniform_init_limit']) \
             + '_patience_' + str(config['params']['patience']) \
             + '_inpdrop_' + str(config['params']['input_dropout']) \
             + '_seed_' + str(config['params']['seed']) \
@@ -169,12 +169,12 @@ def train(config, comet_log, comet_project_name, optimization_exp):
         )
 
     mus = input_features_means['means_by_fold'][config['params']['fold']]
-    #sigmas = preprocess_params['sd_by_fold'][config['params']['fold']]
-    sigmas = None
+    sigmas = input_features_means['sd_by_fold'][config['params']['fold']]
+    #sigmas = None
 
     # Send mus and sigmans to device
     mus = torch.from_numpy(mus).float().to(device)
-    #sigmas = torch.from_numpy(sigmas).float().to(device)
+    sigmas = torch.from_numpy(sigmas).float().to(device)
 
     # ----------------------------------------
     #           LOAD FOLD INDEXES
@@ -208,6 +208,10 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
     train_set = du.FoldDataset(fold_idx[0])
     print('training set:', len(train_set))
+
+    print('TRAIN SET SAMPLE 1')
+    print(train_set.__getitem__(1))
+
     valid_set = du.FoldDataset(fold_idx[1])
     print('valid set:', len(valid_set))
     test_set = du.FoldDataset(fold_idx[2])
@@ -320,6 +324,9 @@ def train(config, comet_log, comet_project_name, optimization_exp):
                                 num_workers=0)
 
     print('Batch generators initiated in:', time.time()-batch_gen_start_time, 'seconds')
+
+    print('TRAIN SET SAMPLE 1')
+    print(train_set.__getitem__(1))
 
     # ----------------------------------------
     #          TRAINING LOOP SET UP
@@ -442,6 +449,17 @@ def train(config, comet_log, comet_project_name, optimization_exp):
             if comet_log:
                 experiment.log_metric("valid_loss", epoch_valid_result[0], epoch=epoch, step=epoch)
 
+        # Save the predictions for regression
+        if config['specifics']['task'] == 'regression':
+            filename = 'model_predictions_epoch{}.npz'.format(epoch+1)
+            print('Saving predictions to %s' % os.path.join(config['specifics']['out_dir'], filename))
+
+            np.savez(os.path.join(config['specifics']['out_dir'], filename),
+                     test_samples=epoch_valid_result[3],
+                     test_labels=epoch_valid_result[2],
+                     test_preds=epoch_valid_result[1].detach().squeeze().cpu())
+
+
         # ---Baseline: check  improvement---
         """
         if mlu.has_improved(best_acc, epoch_acc,min_loss, epoch_loss):
@@ -464,6 +482,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
             # Save model parameters (for later inference)
             print('best validation achieved at epoch {} saving model'.format(epoch+1))
+            lu.save_model_params(config['specifics']['out_dir'], comb_model)
 
         else:
             patience += 1
@@ -474,7 +493,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
             n_epochs = epoch - patience
 
             # log best validation results to comet
-            if comet.log:
+            if comet_log:
                 if config['specifics']['task'] == 'classification':
                     experiment.log_metric("best_valid_loss", best_result[0])
                     experiment.log_metric("best_valid_acc", best_result[1])
@@ -508,7 +527,10 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
     # Reload weights from early stoping
     model_weights_path = os.path.join(config['specifics']['out_dir'], model_params_filename)
-    comb_model.load_state_dict(torch.load(model_weights_path))
+    #print(comb_model.state_dict())
+    #comb_model.load_state_dict(torch.load(model_weights_path))
+    #print('AFTERRRRR')
+    #print(comb_model.state_dict())
 
     # Put model in eval mode
     comb_model.eval()
@@ -532,6 +554,21 @@ def train(config, comet_log, comet_project_name, optimization_exp):
             test_generator, len(test_set), criterion, mus, sigmas, emb,
             config['specifics']['task'], config['specifics']['normalize'])
 
+    """
+    print('REAL TEST:')
+    print('Test loss:', str(test_results[0]), flush=True)
+
+    # Fake tests
+    results = mlu.eval_step(comb_model, device,
+            valid_generator, len(valid_set), criterion, mus, sigmas, emb,
+            config['specifics']['task'], config['specifics']['normalize'])
+    print('eval results:', results)
+
+    print('FAKE TEST:')
+    test_samples, test_ys, test_results = mlu.test_step(comb_model, device,
+            valid_generator, len(valid_set), criterion, mus, sigmas, emb,
+            config['specifics']['task'], config['specifics']['normalize'])
+    """
     # Monitoring time
     print('Test time:', time.time()-start_time, flush=True)
 
