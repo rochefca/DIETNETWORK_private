@@ -10,10 +10,9 @@ from helpers import model
 from helpers import dataset_utils as du
 
 
-def train_step(comb_model, device, optimizer, train_generator,
-        set_size, criterion, mus, sigmas, emb, task, normalize):
-    comb_model.train()
-    # Minibatch monitoring set up
+def train_step(mod_handler, device, optimizer, train_generator,
+               set_size, criterion, mus, sigmas, task, normalize):
+    # Monitoring set up : Minibatch
     minibatch_loss = []
     minibatch_n_right = [] # nb of good classifications
 
@@ -37,12 +36,12 @@ def train_step(comb_model, device, optimizer, train_generator,
         # Reset optimizer
         optimizer.zero_grad()
 
-        with profiler.record_function('Forward pass'):
-            # Forward pass
-            comb_model_out = comb_model(emb, x_batch)
+
+        # Forward pass
+        model_out = mod_handler.forwardpass(x_batch)
 
         # Compute loss (softmax computation done in loss)
-        loss = criterion(comb_model_out, y_batch)
+        loss = criterion(model_out, y_batch)
 
         # Compute gradients
         loss.backward()
@@ -82,10 +81,9 @@ def train_step(comb_model, device, optimizer, train_generator,
     return epoch_result
 
 
-def eval_step(comb_model, device, valid_generator,
-        set_size, criterion, mus, sigmas, emb, task, normalize):
 
-    comb_model.eval()
+def eval_step(mod_handler, device, valid_generator,
+              set_size, criterion, mus, sigmas, task, normalize):
 
     # Monitoring: Minibatch setup
     minibatch_loss = []
@@ -116,10 +114,10 @@ def eval_step(comb_model, device, valid_generator,
             x_batch = du.normalize(x_batch, mus, sigmas)
 
         # Forward pass
-        comb_model_out = comb_model(emb, x_batch)
+        model_out = mod_handler.forwardpass(x_batch)
 
         # Loss
-        loss = criterion(comb_model_out, y_batch)
+        loss = criterion(model_out, y_batch)
 
         # Monitoring : Minibatch
         weighted_loss = loss.item()*len(y_batch) # for unequal minibatches
@@ -127,7 +125,7 @@ def eval_step(comb_model, device, valid_generator,
 
         # Classification: keep nb of good predictions for accuracy computation
         if task == 'classification':
-            _, pred = get_predictions(comb_model_out) # softmax computation
+            _, pred = get_predictions(model_out) # softmax computation
             minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
 
         elif task == 'regression':
@@ -147,8 +145,8 @@ def eval_step(comb_model, device, valid_generator,
     return epoch_result
 
 
-def test_step(comb_model, device, test_generator,
-        set_size, criterion, mus, sigmas, emb, task, normalize):
+def test_step(mod_handler, device, test_generator,
+        set_size, mus, sigmas, task, normalize):
     # Saving data seen while looping through minibatches
     minibatch_loss = []
     minibatch_n_right = [] #number of good classifications
@@ -178,7 +176,7 @@ def test_step(comb_model, device, test_generator,
             x_batch = du.normalize(x_batch, mus, sigmas)
 
         # Forward pass
-        comb_model_out = comb_model(emb, x_batch)
+        model_out = mod_handler.forwardpass(x_batch)
 
         # Loss
         loss = criterion(comb_model_out, y_batch)
@@ -189,7 +187,7 @@ def test_step(comb_model, device, test_generator,
 
         # Predictions
         if task == 'classification':
-            score, pred = get_predictions(comb_model_out)
+            score, pred = get_predictions(model_out)
             test_pred = torch.cat((test_pred,pred), dim=-1)
             test_score = torch.cat((test_score,score), dim=0)
 
@@ -197,7 +195,7 @@ def test_step(comb_model, device, test_generator,
             minibatch_n_right.append(((y_batch - pred) == 0).sum().item())
 
         elif task == 'regression':
-            test_pred = torch.cat((test_pred,comb_model_out.detach()), dim=0)
+            test_pred = torch.cat((test_pred, model_out.detach()), dim=0)
 
     test_loss = np.array(minibatch_loss).sum()/set_size
     #test_loss = np.array(minibatch_loss).mean()
