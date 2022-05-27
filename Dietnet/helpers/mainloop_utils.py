@@ -1,8 +1,10 @@
+import time
 import numpy as np
 
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
+import torch.profiler as profiler
 
 from helpers import model
 from helpers import dataset_utils as du
@@ -14,13 +16,15 @@ def train_step(mod_handler, device, optimizer, train_generator,
     minibatch_loss = []
     minibatch_n_right = [] # nb of good classifications
 
+    # Looping through minibatches
     for x_batch, y_batch, _ in train_generator:
-        # Send data to device
-        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
-        x_batch = x_batch.float()
+        with profiler.record_function('To device'):
+            # Send data to device
+            x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+            x_batch = x_batch.float()
 
-        if task == 'regression':
-            y_batch = y_batch.unsqueeze(1)
+            if task == 'regression':
+                y_batch = y_batch.unsqueeze(1)
 
         # Replace missing values
         du.replace_missing_values(x_batch, mus)
@@ -31,6 +35,7 @@ def train_step(mod_handler, device, optimizer, train_generator,
 
         # Reset optimizer
         optimizer.zero_grad()
+
 
         # Forward pass
         model_out = mod_handler.forwardpass(x_batch)
@@ -52,6 +57,17 @@ def train_step(mod_handler, device, optimizer, train_generator,
             _, pred = get_predictions(comb_model_out) # softmax computation
             minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
 
+        #batch_time = time.time() - batch_start_time
+        #print('Batch time:', batch_time, flush=True)
+
+        """
+        if comb_model.training:
+            with torch.no_grad():
+                filename = 'COMPARE/train_loop_regress.pt'
+                torch.save(d, filename)
+        break
+        """
+
     # Monitoring: Epoch
     epoch_loss = np.array(minibatch_loss).mean()
 
@@ -65,13 +81,24 @@ def train_step(mod_handler, device, optimizer, train_generator,
     return epoch_result
 
 
+
 def eval_step(mod_handler, device, valid_generator,
               set_size, criterion, mus, sigmas, task, normalize):
+
     # Monitoring: Minibatch setup
     minibatch_loss = []
     minibatch_n_right = [] # nb of good classifications
 
-    for x_batch, y_batch, _ in valid_generator:
+    test_pred = torch.tensor([]).to(device) #prediction of each sample
+    test_ys = np.array([])
+    test_samples = np.array([]) #test samples
+
+    for batch, (x_batch, y_batch, samples) in enumerate(valid_generator):
+        # Save samples
+        test_samples = np.concatenate([test_samples, samples])
+        # Save labels
+        test_ys = np.concatenate([test_ys, y_batch])
+
         # Send data to device
         x_batch, y_batch = x_batch.to(device), y_batch.to(device)
         x_batch = x_batch.float()
@@ -101,6 +128,10 @@ def eval_step(mod_handler, device, valid_generator,
             _, pred = get_predictions(model_out) # softmax computation
             minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
 
+        elif task == 'regression':
+            test_pred = torch.cat((test_pred,comb_model_out.detach()), dim=0)
+
+
     epoch_loss = np.array(minibatch_loss).sum()/set_size
     #epoch_loss = np.array(minibatch_loss).mean()
 
@@ -109,7 +140,7 @@ def eval_step(mod_handler, device, valid_generator,
         epoch_result = (epoch_loss, epoch_acc)
 
     elif task == 'regression':
-        epoch_result = (epoch_loss,)
+        epoch_result = (epoch_loss,test_pred,test_ys,test_samples)
 
     return epoch_result
 
