@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
+import torch.profiler as profiler
 
 from helpers import model
 from helpers import dataset_utils as du
@@ -18,19 +19,13 @@ def train_step(comb_model, device, optimizer, train_generator,
 
     # Looping through minibatches
     for x_batch, y_batch, _ in train_generator:
-        # Send data to device
-        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
-        x_batch = x_batch.float()
+        with profiler.record_function('To device'):
+            # Send data to device
+            x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+            x_batch = x_batch.float()
 
-        """
-        if (comb_model.training & (epoch==1)):
-            with torch.no_grad():
-                d = {'x':x_batch}
-        """
-        #batch_start_time = time.time()
-
-        if task == 'regression':
-            y_batch = y_batch.unsqueeze(1)
+            if task == 'regression':
+                y_batch = y_batch.unsqueeze(1)
 
         # Replace missing values
         du.replace_missing_values(x_batch, mus)
@@ -42,11 +37,9 @@ def train_step(comb_model, device, optimizer, train_generator,
         # Reset optimizer
         optimizer.zero_grad()
 
-        # Forward pass
-        comb_model_out = comb_model(emb, x_batch)
-
-        #print('COMB MODEL OUT:')
-        #print(comb_model_out)
+        with profiler.record_function('Forward pass'):
+            # Forward pass
+            comb_model_out = comb_model(emb, x_batch)
 
         # Compute loss (softmax computation done in loss)
         loss = criterion(comb_model_out, y_batch)

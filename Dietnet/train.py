@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
+from torch.profiler import profiler
 
 import helpers.dataset_utils as du
 import helpers.model as model
@@ -25,7 +26,9 @@ import helpers.log_utils as lu
 def main():
     args = parse_args()
 
-    # Create dir where training info will be saved
+
+
+    # Create dir where training results will be saved
     """
     The directory will be created in exp_path/exp_name with the name
     exp_name_foldi where i is the number of the fold
@@ -35,9 +38,11 @@ def main():
     # Create the full config
     """
     The full config contains 2 level info
-        - hyperparams : provided in the config file
+        - hyperparams : Model hyperparameters (this info is specified in the
+                        config.yaml file provided by user with --config
+
         - specifics : paths and files used in the training process
-                      (specified with command line arguments)
+                      (they are specified with command line arguments)
     """
     config = {}
 
@@ -404,7 +409,8 @@ def train(config, comet_log, comet_project_name, optimization_exp):
         # ---Training---
         comb_model.train()
 
-        epoch_train_result = mlu.train_step(comb_model, device, optimizer,
+        with profiler.profile(with_stack=True, profile_memory=True) as prof:
+            epoch_train_result = mlu.train_step(comb_model, device, optimizer,
                 train_generator, len(train_set), criterion, mus, sigmas, emb,
                 config['specifics']['task'], config['specifics']['normalize'])
 
@@ -513,6 +519,9 @@ def train(config, comet_log, comet_project_name, optimization_exp):
         total_time += epoch_time
         print('time:', epoch_time, flush=True)
 
+        # Pytorch profiler
+        #print(prof.key_averages(group_by_stack_n=5).table(sort_by='self_cpu_time_total', row_limit=5))
+
         if comet_log:
             experiment.log_metric("epoch_time", epoch_time, epoch=epoch, step=epoch)
 
@@ -522,6 +531,9 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     # ----------------------------------------
     #                 TEST
     # ----------------------------------------
+    #print(prof.key_averages(group_by_stack_n=5).table(sort_by='self_cpu_time_total', row_limit=5))
+    print(prof.key_averages().table())
+
     # Monitoring time
     start_time = time.time()
 
