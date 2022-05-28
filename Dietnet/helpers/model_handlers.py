@@ -14,15 +14,15 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
-import dataset_utils as du
-import model as model
-import mainloop_utils as mlu
-import log_utils as lu
+import helpers.dataset_utils as du
+import helpers.model as model
+import helpers.mainloop_utils as mlu
+import helpers.log_utils as lu
 
 
 class modelHandler:
     """
-    This class encapsulates our Neural Network 
+    This class encapsulates our Neural Network
     (which itself is an instance of torch.module)
     This class contains methods for model initialization and forward/reverse pass
     """
@@ -35,19 +35,19 @@ class modelHandler:
 
     def save(self):
         raise NotImplementedError
-    
+
     def load(self):
         raise NotImplementedError
 
     def train_mode(self):
         raise NotImplementedError
-    
+
     def eval_mode(self):
         raise NotImplementedError
-        
+
     def get_trainable_parameters(self):
         raise NotImplementedError
-    
+
     def log_weight_initialization(self):
         raise NotImplementedError
 
@@ -124,22 +124,22 @@ class dietNetworkHandler(modelHandler):
 
         self.model = comb_model
         self.emb = emb
-    
+
     def get_trainable_parameters(self):
         """
         Get trainable parameters (for torch optimizer)
         """
         return self.model.parameters()
-    
+
     def forwardpass(self, x):
         return self.model(self.emb, x)
-    
+
     def save(self, out_dir, filename):
         lu.save_model_params(out_dir, self.model, filename)
-    
+
     def load(self, torch_weight_dict):
         self.model.load_state_dict(torch_weight_dict)
-        
+
     def log_weight_initialization(self, experiment):
         # Log weights initialisation values to comet-ml
 
@@ -229,16 +229,16 @@ class MlpHandler(modelHandler):
         Get trainable parameters (for torch optimizer)
         """
         return self.model.parameters()
-    
+
     def forwardpass(self, x):
         return self.model(x)
-    
+
     def save(self, out_dir, filename):
         lu.save_model_params(out_dir, self.model, filename)
-    
+
     def load(self, torch_weight_dict):
         self.model.load_state_dict(torch_weight_dict)
-        
+
     def log_weight_initialization(self, experiment):
         # Log weights initialisation values to comet-ml
 
