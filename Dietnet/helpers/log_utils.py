@@ -149,3 +149,12 @@ def save_additional_data(out_dir,
              feature_names=feature_names,
              norm_mus=norm_mus,
              norm_sigmas=norm_sigmas)
+"""
+def save_additional_data_regression(out_dir,
+        train_samples, valid_samples, test_samples,
+        test_labels, pred, test_loss,feature_names):
+
+    filename = 'additional_data.npz'
+
+    print('Saving additional data to %s' % os.path.join(out_dir, filename))
+"""

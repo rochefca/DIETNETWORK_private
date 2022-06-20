@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 
 class Feat_emb_net(nn.Module):
-    def __init__(self, n_feats, n_hidden_u, param_init):
+    def __init__(self, n_feats, n_hidden_u, param_init, uniform_init_limit):
         super(Feat_emb_net, self).__init__()
 
         # Hidden layers
@@ -38,7 +38,7 @@ class Feat_emb_net(nn.Module):
 
         else:
             for layer in self.hidden_layers:
-                nn.init.uniform_(layer.weight, a=-0.02, b=0.02)
+                nn.init.uniform_(layer.weight, a=-uniform_init_limit, b=uniform_init_limit)
 
 
     def forward(self, x):
@@ -215,11 +215,12 @@ class Discrim_net2(nn.Module):
 
 class CombinedModel(nn.Module):
     def __init__(self, n_feats, n_hidden_u_aux, n_hidden_u_main,
-                 n_targets, param_init, input_dropout=0., eps=1e-5, incl_bias=True, incl_softmax=False):
+                 n_targets, param_init, aux_uniform_init_limit,
+                 input_dropout=0., eps=1e-5, incl_bias=True, incl_softmax=False):
         super(CombinedModel, self).__init__()
 
         # Initialize feat. embedding and discriminative networks
-        self.feat_emb = Feat_emb_net(n_feats, n_hidden_u_aux, param_init)
+        self.feat_emb = Feat_emb_net(n_feats, n_hidden_u_aux, param_init, aux_uniform_init_limit)
         self.disc_net = Discrim_net2(n_feats, n_hidden_u_main, n_targets,
                                      param_init, input_dropout, eps,
                                      incl_bias, incl_softmax)
