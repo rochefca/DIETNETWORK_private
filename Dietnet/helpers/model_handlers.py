@@ -14,10 +14,10 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
-import dataset_utils as du
-import model as model
-import mainloop_utils as mlu
-import log_utils as lu
+import helpers.dataset_utils as du
+import helpers.model as model
+import helpers.mainloop_utils as mlu
+import helpers.log_utils as lu
 
 
 class modelHandler:
@@ -87,6 +87,8 @@ class dietNetworkHandler(modelHandler):
         n_feats = emb.size()[0] # input of main net
 
         # Main net output size (nb targets)
+        dataset_file = os.path.join(config['specifics']['exp_path'],
+                                    config['specifics']['dataset'])
         if config['specifics']['task'] == 'classification':
             with h5py.File(dataset_file, 'r') as f:
                 n_targets = len(f['label_names'])
@@ -192,6 +194,9 @@ class MlpHandler(modelHandler):
 
         # Main net output size (nb targets)
         if config['specifics']['task'] == 'classification':
+            
+            dataset_file = os.path.join(config['specifics']['exp_path'],
+                                        config['specifics']['dataset'])
             with h5py.File(dataset_file, 'r') as f:
                 n_targets = len(f['label_names'])
         elif config['specifics']['task'] == 'regression':

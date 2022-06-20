@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
 import helpers.dataset_utils as du
-import helpers.model as model
+#import helpers.model as model
 import helpers.mainloop_utils as mlu
 import helpers.log_utils as lu
 from helpers.model_handlers import dietNetworkHandler, MlpHandler
@@ -195,12 +195,14 @@ def train(config, comet_log, comet_project_name, optimization_exp):
         )
 
     mus = input_features_means['means_by_fold'][config['params']['fold']]
-    #sigmas = preprocess_params['sd_by_fold'][config['params']['fold']]
-    sigmas = None
-
-    # Send mus and sigmans to device
+    # Send mus to device
     mus = torch.from_numpy(mus).float().to(device)
-    #sigmas = torch.from_numpy(sigmas).float().to(device)
+    if 'sd_by_fold' in input_features_means.files:
+        sigmas = input_features_means['sd_by_fold'][config['params']['fold']]
+        ##sigmas = preprocess_params['sd_by_fold'][config['params']['fold']]
+        sigmas = torch.from_numpy(sigmas).float().to(device)
+    else:
+        sigmas = None
 
     # ----------------------------------------
     #           LOAD FOLD INDEXES
@@ -289,29 +291,13 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     # ----------------------------------------
     #          TRAINING LOOP SET UP
     # ----------------------------------------
-    """
-    # Monitoring: Epoch loss and accuracy setup
-    train_losses = []
-    train_acc = []
-    valid_losses = []
-    valid_acc = []
-    """
+
     # Monitoring set up: Epoch
     train_results_by_epoch = []
     valid_results_by_epoch = []
 
     # File where to save model params
     model_params_filename = 'model_params_' + exp_identifier + '.pt'
-
-    """
-    # Baseline
-    comb_model.eval()
-    min_loss, best_acc = mlu.eval_step(comb_model, device,
-            valid_generator, len(valid_set), criterion, mus, sigmas, emb,
-            config['specifics']['task'], config['specifics']['normalize'])
-
-    print('baseline loss:',min_loss, 'baseline acc:', best_acc)
-    """
 
     # Baseline (and best result at this point)
     print('Computing baseline (forward pass in model)')
@@ -352,22 +338,6 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
         # ---Training---
         mod_handler.train_mode()
-
-        """
-        epoch_loss, epoch_acc = mlu.train_step(comb_model, device, optimizer,
-                train_generator, len(train_set), criterion, mus, sigmas, emb,
-                config['specifics']['task'], config['specifics']['normalize'])
-
-        print('train loss:', epoch_loss, 'train acc:', epoch_acc, flush=True)
-
-        train_losses.append(epoch_loss)
-        train_acc.append(epoch_acc)
-
-        # Comet
-        if comet_log:
-            experiment.log_metric("train_accuracy", epoch_acc, epoch=epoch, step=epoch)
-            experiment.log_metric("train_loss", epoch_loss, epoch=epoch, step=epoch)
-        """
 
         epoch_train_result = mlu.train_step(mod_handler, device, optimizer,
                 train_generator, len(train_set), criterion, mus, sigmas,
@@ -415,18 +385,6 @@ def train(config, comet_log, comet_project_name, optimization_exp):
                 experiment.log_metric("valid_loss", epoch_valid_result[0], epoch=epoch, step=epoch)
 
         # ---Baseline: check  improvement---
-        """
-        if mlu.has_improved(best_acc, epoch_acc,min_loss, epoch_loss):
-                patience = 0
-                if epoch_acc > best_acc:
-                    best_acc = epoch_acc
-                if epoch_loss < min_loss:
-                    min_loss = epoch_loss
-
-                # Save model parameters (for later inference)
-                print('best validation acc achieved: {} (loss {}) at epoch {} saving model ...'.format(best_acc, epoch_loss, epoch))
-                lu.save_model_params(config['specifics']['out_dir'], comb_model, filename=model_params_filename)
-        """
 
         if mlu.has_improved(best_result, epoch_valid_result):
             # Reset patience
@@ -478,19 +436,6 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
     # Test step
     print('Testing model', flush=True)
-    """
-    test_samples, test_ys, score, pred, acc = mlu.test_step(comb_model, device,
-            test_generator, len(test_set), mus, sigmas, emb,
-            config['specifics']['task'], config['specifics']['normalize'])
-
-    print('Final accuracy:', str(acc), flush=True)
-    print('total running time:', str(total_time), flush=True)
-
-    # Comet
-    if comet_log:
-        experiment.log_metric("test accuracy", acc)
-    """
-
     test_samples, test_ys, test_results = mlu.test_step(mod_handler, device,
             test_generator, len(test_set), mus, sigmas,
             config['specifics']['task'], config['specifics']['normalize'])
@@ -520,15 +465,14 @@ def train(config, comet_log, comet_project_name, optimization_exp):
                 label_names = np.array(f['label_names']).astype(np.str_)
 
             lu.save_results(config['specifics']['out_dir'],
-                    test_samples, test_ys, label_names, score.cpu(), pred.cpu())
+                    test_samples, test_ys, label_names, test_results[0].cpu(), test_results[1].cpu())
 
         elif config['specifics']['task'] == 'regression':
             lu.save_results_regression(config['specifics']['out_dir'],
                     test_samples, test_ys, test_results[0].detach().squeeze().cpu())
 
         # Save additional data (additional_data.npz)
-        print('saving additional results', flush=True)
-        print('TO DO')
+        #print('saving additional results', flush=True)
         """
         train_samples = train_set.get_samples()
         valid_samples = valid_set.get_samples()

@@ -49,7 +49,7 @@ def train_step(mod_handler, device, optimizer, train_generator,
 
         # Classification: keep nb of good predictions for accuracy computation
         if task == 'classification':
-            _, pred = get_predictions(comb_model_out) # softmax computation
+            _, pred = get_predictions(model_out) # softmax computation
             minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
 
     # Monitoring: Epoch
