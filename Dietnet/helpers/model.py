@@ -1,3 +1,4 @@
+import sys
 import numpy as np
 
 import torch
@@ -42,11 +43,26 @@ class Feat_emb_net(nn.Module):
 
 
     def forward(self, x):
-        for layer in self.hidden_layers:
+        if self.training:
+            with torch.no_grad():
+                d = {'x':x, 'x_mean':x.mean(axis=0)}
+
+        for i,layer in enumerate(self.hidden_layers):
             ze = layer(x)
             ae = torch.tanh(ze)
             x = ae
 
+            """
+            if self.training:
+                with torch.no_grad():
+                    d['ze_layer{}'.format(i)] = ze
+                    d['ze_layer{}_mean'.format(i)] = ze.mean(axis=0)
+
+                    d['ae_layer{}'.format(i)] = ae
+                    d['ae_layer{}_mean'.format(i)] = ae.mean(axis=0)
+                    filename = 'COMPARE/compare_regressImplem_auxNet.pt'
+                    torch.save(d, filename)
+            """
         return ae
 
 
@@ -183,14 +199,91 @@ class Discrim_net2(nn.Module):
         # input size: batch_size x n_feats
         # weight = comes from feat embedding net
         # now ^^^ is passed with forward
+        """
+        print('MODEL IN TRAINING MODE:', self.training)
+
+        print('FAT LAYER WEIGHTS:')
+        print(fatLayer_weights)
+        print(fatLayer_weights.dtype)
+        print(fatLayer_weights.mean(axis=0))
+        """
+
         x = self.input_dropout(x)
 
+        """
+        if self.training:
+            with torch.no_grad():
+                d = {'x':x, 'x_mean':x.mean(axis=0), 'fat_weights':fatLayer_weights, 'fat_weights_mean':fatLayer_weights.mean(axis=0)}
+        """
+        """
+        print('X')
+        print(x)
+        print(x.dtype)
+        print('MEAN')
+        print(x.mean(axis=0))
+        """
         # Fat layer
         z1 = F.linear(x, fatLayer_weights, bias=self.fat_bias)
-        a1 = torch.relu(z1)
-        a1 = self.bn_fatLayer(a1)
-        a1 = self.dropout(a1)
 
+        """
+        if self.training:
+            with torch.no_grad():
+                d['z1'] = z1
+                d['z1_mean'] = z1.mean(axis=0)
+        """
+        """
+        print('FAT LAYER OUTPUT')
+        print(z1)
+        print(z1.dtype)
+        print(z1.mean(axis=0))
+        """
+        a1 = torch.relu(z1)
+        """
+        if self.training:
+            with torch.no_grad():
+                d['a1'] = a1
+                d['a1_mean'] = a1.mean(axis=0)
+        """
+        """
+        print('RELU OUTPUT')
+        print(a1)
+        print(a1.dtype)
+        print('MEAN')
+        print(a1.mean(axis=0))
+        """
+        a1 = self.bn_fatLayer(a1)
+        """
+        if self.training:
+            with torch.no_grad():
+                d['a1_bnormed'] = a1
+                d['a1_bnormed_mean'] = a1.mean(axis=0)
+        """
+        """
+        print('BN')
+        print(self.bn_fatLayer)
+        print('weights:',self.bn_fatLayer.weight)
+        print('bias:', self.bn_fatLayer.bias)
+        print('running mean:', self.bn_fatLayer.running_mean)
+        print('running var:', self.bn_fatLayer.running_var)
+
+        print('BN OUTPUT')
+        print(a1)
+        """
+
+        a1 = self.dropout(a1)
+        """
+        if self.training:
+            with torch.no_grad():
+                d['a1_drop'] = a1
+                d['a1_drop_mean'] = a1.mean(axis=0)
+
+                filename = 'COMPARE/compare_regress_mainNet.pt'
+                torch.save(d, filename)
+        """
+        """
+        print('DROPOUT:')
+        print(a1)
+        """
         # Hidden layers
         next_input = a1
         for layer, bn in zip(self.hidden_layers, self.bn):
@@ -230,6 +323,7 @@ class CombinedModel(nn.Module):
     def forward(self, emb, x_batch, save_layers=False):
         # Forward pass in auxilliary net
         feat_emb_model_out = self.feat_emb(emb)
+
         # Forward pass in discrim net
         self.fatLayer_weights = torch.transpose(feat_emb_model_out,1,0)
         discrim_model_out = self.disc_net(x_batch, self.fatLayer_weights, save_layers)
