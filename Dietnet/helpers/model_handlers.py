@@ -110,6 +110,7 @@ class dietNetworkHandler(modelHandler):
                                 +config['params']['nb_hidden_u_main'],
                 n_targets=n_targets,
                 param_init=config['specifics']['param_init'],
+                aux_uniform_init_limit=config['params']['uniform_init_limit'],
                 input_dropout=config['params']['input_dropout'])
         print('Model initiated in: ', time.time()-model_init_start_time, 'seconds')
 

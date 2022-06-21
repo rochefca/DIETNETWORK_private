@@ -91,6 +91,7 @@ def main():
                 + '_mainu_' \
                     + str(config['params']['nb_hidden_u_aux'][-1]) + '_' \
                     + str(config['params']['nb_hidden_u_main'])[1:-1].replace(', ','_') \
+                + '_uniform_init_limit_' + str(config['params']['uniform_init_limit']) \
                 + '_patience_' + str(config['params']['patience']) \
                 + '_seed_' + str(config['params']['seed']) \
                 + '.pt'

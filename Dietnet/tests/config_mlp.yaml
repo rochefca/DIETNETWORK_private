@@ -1,0 +1,10 @@
+batch_size: 276
+epochs: 2
+input_dropout: 0.0
+learning_rate: 0.00003
+learning_rate_annealing: 0.999
+num_input_features: 408940
+n_hidden_u:
+- 100
+patience: 50
+seed: 23
