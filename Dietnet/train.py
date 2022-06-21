@@ -101,7 +101,6 @@ def main():
                 + '_inpdrop_' + str(config['params']['input_dropout']) \
                 + '_lr_' + str(config['params']['learning_rate']) \
                 + '_lra_' + str(config['params']['learning_rate_annealing']) \
-                + '_num_input_features_' + str(config['params']['num_input_features']) \
                 + '_mlp_' \
                     + str(config['params']['n_hidden_u'])[1:-1].replace(', ','_') \
                 + '_patience_' + str(config['params']['patience']) \
@@ -133,10 +132,8 @@ def train(config, comet_log, comet_project_name, optimization_exp):
                 + '_inpdrop_' + str(config['params']['input_dropout']) \
                 + '_seed_' + str(config['params']['seed'])
     elif config['specifics']['model'] == 'Mlp':
-        exp_identifier = 'num_input_features_' \
-                + str(config['params']['num_input_features']) \
-                + '_mlp_' \
-                    + str(config['params']['n_hidden_u'])[1:-1].replace(', ','_') \
+        exp_identifier = 'mlp_' \
+                + str(config['params']['n_hidden_u'])[1:-1].replace(', ','_') \
                 + '_lr_' + str(config['params']['learning_rate']) \
                 + '_lra_' + str(config['params']['learning_rate_annealing']) \
                 + '_epochs_' + str(config['params']['epochs']) \
@@ -451,7 +448,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     # Test step
     print('Testing model', flush=True)
     test_samples, test_ys, test_results = mlu.test_step(mod_handler, device,
-            test_generator, len(test_set), mus, sigmas,
+            test_generator, len(test_set), criterion, mus, sigmas,
             config['specifics']['task'], config['specifics']['normalize'])
 
     # Monitoring time

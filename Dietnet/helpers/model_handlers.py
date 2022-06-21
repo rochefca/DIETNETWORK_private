@@ -188,9 +188,18 @@ class MlpHandler(modelHandler):
         # ----------------------------------------
         #               MAKE MODEL
         # ----------------------------------------
+        
+        # load emb to infer number of features
+        print('Loading embedding')
+        emb = du.load_embedding(os.path.join(
+            config['specifics']['exp_path'],
+            config['specifics']['embedding']),
+            config['params']['fold'])
+        # Main net input size (nb of features)
+        n_feats = emb.size()[0] # input of main net
+        del emb
 
         # Main net input size (nb of features)
-        n_feats = config['params']['num_input_features']
         n_hidden_u = config['params']['n_hidden_u']
 
         # Main net output size (nb targets)

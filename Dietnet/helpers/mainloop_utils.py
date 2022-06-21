@@ -115,7 +115,7 @@ def eval_step(mod_handler, device, valid_generator,
 
 
 def test_step(mod_handler, device, test_generator,
-        set_size, mus, sigmas, task, normalize):
+        set_size, criterion, mus, sigmas, task, normalize):
     # Saving data seen while looping through minibatches
     minibatch_loss = []
     minibatch_n_right = [] #number of good classifications
@@ -148,7 +148,7 @@ def test_step(mod_handler, device, test_generator,
         model_out = mod_handler.forwardpass(x_batch)
 
         # Loss
-        loss = criterion(comb_model_out, y_batch)
+        loss = criterion(model_out, y_batch)
 
         # Monitoring : Minibatch
         weighted_loss = loss.item()*len(y_batch) # for unequal minibatches
