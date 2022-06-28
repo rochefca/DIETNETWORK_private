@@ -110,6 +110,7 @@ class dietNetworkHandler(modelHandler):
                                 +config['params']['nb_hidden_u_main'],
                 n_targets=n_targets,
                 param_init=config['specifics']['param_init'],
+                aux_uniform_init_limit=config['params']['uniform_init_limit'],
                 input_dropout=config['params']['input_dropout'])
         print('Model initiated in: ', time.time()-model_init_start_time, 'seconds')
 
@@ -187,9 +188,18 @@ class MlpHandler(modelHandler):
         # ----------------------------------------
         #               MAKE MODEL
         # ----------------------------------------
+        
+        # load emb to infer number of features
+        print('Loading embedding')
+        emb = du.load_embedding(os.path.join(
+            config['specifics']['exp_path'],
+            config['specifics']['embedding']),
+            config['params']['fold'])
+        # Main net input size (nb of features)
+        n_feats = emb.size()[0] # input of main net
+        del emb
 
         # Main net input size (nb of features)
-        n_feats = config['params']['num_input_features']
         n_hidden_u = config['params']['n_hidden_u']
 
         # Main net output size (nb targets)
