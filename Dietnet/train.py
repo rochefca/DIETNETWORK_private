@@ -22,7 +22,7 @@ import torch.nn.functional as F
 from torch.profiler import profiler
 
 import helpers.dataset_utils as du
-import helpers.model as model
+#import helpers.model as model
 import helpers.mainloop_utils as mlu
 import helpers.log_utils as lu
 from helpers.model_handlers import dietNetworkHandler, MlpHandler
@@ -95,6 +95,7 @@ def main():
                 + '_mainu_' \
                     + str(config['params']['nb_hidden_u_aux'][-1]) + '_' \
                     + str(config['params']['nb_hidden_u_main'])[1:-1].replace(', ','_') \
+                + '_uniform_init_limit_' + str(config['params']['uniform_init_limit']) \
                 + '_patience_' + str(config['params']['patience']) \
                 + '_seed_' + str(config['params']['seed']) \
                 + '.pt'
@@ -104,7 +105,6 @@ def main():
                 + '_inpdrop_' + str(config['params']['input_dropout']) \
                 + '_lr_' + str(config['params']['learning_rate']) \
                 + '_lra_' + str(config['params']['learning_rate_annealing']) \
-                + '_num_input_features_' + str(config['params']['num_input_features']) \
                 + '_mlp_' \
                     + str(config['params']['n_hidden_u'])[1:-1].replace(', ','_') \
                 + '_patience_' + str(config['params']['patience']) \
@@ -136,10 +136,8 @@ def train(config, comet_log, comet_project_name, optimization_exp):
                 + '_inpdrop_' + str(config['params']['input_dropout']) \
                 + '_seed_' + str(config['params']['seed'])
     elif config['specifics']['model'] == 'Mlp':
-        exp_identifier = 'num_input_features_' \
-                + str(config['params']['num_input_features']) \
-                + '_mlp_' \
-                    + str(config['params']['n_hidden_u'])[1:-1].replace(', ','_') \
+        exp_identifier = 'mlp_' \
+                + str(config['params']['n_hidden_u'])[1:-1].replace(', ','_') \
                 + '_lr_' + str(config['params']['learning_rate']) \
                 + '_lra_' + str(config['params']['learning_rate_annealing']) \
                 + '_epochs_' + str(config['params']['epochs']) \
@@ -203,12 +201,15 @@ def train(config, comet_log, comet_project_name, optimization_exp):
         )
 
     mus = input_features_means['means_by_fold'][config['params']['fold']]
-    sigmas = input_features_means['sd_by_fold'][config['params']['fold']]
-    #sigmas = None
 
-    # Send mus and sigmans to device
+    # Send mus to device
     mus = torch.from_numpy(mus).float().to(device)
-    sigmas = torch.from_numpy(sigmas).float().to(device)
+    if 'sd_by_fold' in input_features_means.files:
+        sigmas = input_features_means['sd_by_fold'][config['params']['fold']]
+        ##sigmas = preprocess_params['sd_by_fold'][config['params']['fold']]
+        sigmas = torch.from_numpy(sigmas).float().to(device)
+    else:
+        sigmas = None
 
     # ----------------------------------------
     #           LOAD FOLD INDEXES
@@ -304,6 +305,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     # ----------------------------------------
     #          TRAINING LOOP SET UP
     # ----------------------------------------
+
     # Monitoring set up: Epoch
     train_results_by_epoch = []
     valid_results_by_epoch = []
@@ -409,18 +411,6 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
 
         # ---Baseline: check  improvement---
-        """
-        if mlu.has_improved(best_acc, epoch_acc,min_loss, epoch_loss):
-                patience = 0
-                if epoch_acc > best_acc:
-                    best_acc = epoch_acc
-                if epoch_loss < min_loss:
-                    min_loss = epoch_loss
-
-                # Save model parameters (for later inference)
-                print('best validation acc achieved: {} (loss {}) at epoch {} saving model ...'.format(best_acc, epoch_loss, epoch))
-                lu.save_model_params(config['specifics']['out_dir'], comb_model, filename=model_params_filename)
-        """
 
         if mlu.has_improved(best_result, epoch_valid_result):
             # Reset patience
@@ -489,21 +479,8 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
     # Test step
     print('Testing model', flush=True)
-    """
-    test_samples, test_ys, score, pred, acc = mlu.test_step(comb_model, device,
-            test_generator, len(test_set), mus, sigmas, emb,
-            config['specifics']['task'], config['specifics']['normalize'])
-
-    print('Final accuracy:', str(acc), flush=True)
-    print('total running time:', str(total_time), flush=True)
-
-    # Comet
-    if comet_log:
-        experiment.log_metric("test accuracy", acc)
-    """
-
     test_samples, test_ys, test_results = mlu.test_step(mod_handler, device,
-            test_generator, len(test_set), mus, sigmas,
+            test_generator, len(test_set), criterion, mus, sigmas,
             config['specifics']['task'], config['specifics']['normalize'])
 
     """
@@ -548,16 +525,14 @@ def train(config, comet_log, comet_project_name, optimization_exp):
                 label_names = np.array(f['label_names']).astype(np.str_)
 
             lu.save_results(config['specifics']['out_dir'],
-                    test_samples, test_ys, label_names,
-                    test_results[0].cpu(), test_results[1].cpu())
+                    test_samples, test_ys, label_names, test_results[0].cpu(), test_results[1].cpu())
 
         elif config['specifics']['task'] == 'regression':
             lu.save_results_regression(config['specifics']['out_dir'],
                     test_samples, test_ys, test_results[1].detach().squeeze().cpu())
 
         # Save additional data (additional_data.npz)
-        print('saving additional results', flush=True)
-        print('TO DO')
+        #print('saving additional results', flush=True)
         """
         train_samples = train_set.get_samples()
         valid_samples = valid_set.get_samples()

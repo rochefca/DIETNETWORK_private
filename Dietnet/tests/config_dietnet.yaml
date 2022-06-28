@@ -1,0 +1,11 @@
+batch_size: 200
+epochs: 1
+input_dropout: 0.0
+learning_rate: 0.00003
+learning_rate_annealing: 0.999
+nb_hidden_u_aux: [100,100]
+nb_hidden_u_main: [100]
+patience: 1000
+seed: 23
+train_valid_ratio: 0.75
+uniform_init_limit: 0.02

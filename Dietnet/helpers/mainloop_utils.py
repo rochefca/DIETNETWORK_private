@@ -54,7 +54,7 @@ def train_step(mod_handler, device, optimizer, train_generator,
 
         # Classification: keep nb of good predictions for accuracy computation
         if task == 'classification':
-            _, pred = get_predictions(comb_model_out) # softmax computation
+            _, pred = get_predictions(model_out) # softmax computation
             minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
 
         #batch_time = time.time() - batch_start_time
@@ -146,7 +146,7 @@ def eval_step(mod_handler, device, valid_generator,
 
 
 def test_step(mod_handler, device, test_generator,
-        set_size, mus, sigmas, task, normalize):
+        set_size, criterion, mus, sigmas, task, normalize):
     # Saving data seen while looping through minibatches
     minibatch_loss = []
     minibatch_n_right = [] #number of good classifications
@@ -179,7 +179,7 @@ def test_step(mod_handler, device, test_generator,
         model_out = mod_handler.forwardpass(x_batch)
 
         # Loss
-        loss = criterion(comb_model_out, y_batch)
+        loss = criterion(model_out, y_batch)
 
         # Monitoring : Minibatch
         weighted_loss = loss.item()*len(y_batch) # for unequal minibatches
