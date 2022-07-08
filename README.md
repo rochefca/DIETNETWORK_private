@@ -1,7 +1,77 @@
 # DIETNETWORK
 
 Pytorch implementation of DietNetwork (https://arxiv.org/abs/1611.09340)
+
+## Files
+- **Genotypes**: File of genotypes in tab-separated format. One sample per line with its genotypes in additive encoding format for every SNPs (qst column is sample ids). Missing genotypes can be encoded NA, ./. or -1
+- **Labels**
+    - Class labels
+    - Regression labels
+- **Config**
+
+## Usage
+1. Create Dataset
+2. Partition data into folds
+3. Compute embedding
+4. Compute input features statistics
+5. Train
+
+## 1. Create Dataset
+Create a hdf5 file using genotypes and labels files.
+```
+usage: create_dataset.py [-h] --exp-path EXP_PATH --task
+                         {classification,regression} --genotypes GENOTYPES
+                         --class-labels CLASS_LABELS
+                         [--regression-labels REGRESSION_LABELS]
+                         [--ncpus NCPUS] [--out OUT]
+
+Create hdf5 dataset from genotype and label files.
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --exp-path EXP_PATH   Path to directory where results will be written
+  --task {classification,regression}
+                        Model's task. Choices: classification, regression
+  --genotypes GENOTYPES
+                        File of genotypes in tab-separated format (provide
+                        full path to file). Each line contains a sample id
+                        followed by its genotype (additive-encoding format)
+                        for every SNP. Missing genotypes can be encoded NA,
+                        ./. or -1
+  --class-labels CLASS_LABELS
+                        File of samples' class labels (provide full path).
+                        Each line contains a sample id followed by its class
+                        label in tab-separated format.
+  --regression-labels REGRESSION_LABELS
+                        File of samples' regression labels (provide full
+                        path). Each line contains a sample id followed by its
+                        label in tab-separated format.
+  --ncpus NCPUS         Number of cpus for parallel loading. Default: 1
+  --out OUT             Filename for the returned dataset. Default:
+                        dataset.hdf5
+```
+### Create dataset for classification task
+```
+python create_dataset.py \
+    --exp-path <experiment_dir_path> \
+    --task classification \
+    --genotypes <genotype_file> \
+    --class-labels <class_labels_file> \
+```
+### Create dataset for regression task
+```
+python create_dataset.py \
+    --exp-path <experiment_dir_path> \
+    --task regression \
+    --genotypes <genotype_file> \
+    --class-labels <class_labels_file> \
+    --regression-labels <regression_labels_file>
+```
+
+## OLD README
 ## Training pipeline
+
+
 
 ![code_wf](Images/dn_workflow.png)
 ## Scripts
