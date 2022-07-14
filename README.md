@@ -3,24 +3,20 @@
 Pytorch implementation of DietNetwork (https://arxiv.org/abs/1611.09340)
 
 ## Files
-- **Genotypes**: File of genotypes in tab-separated format. One sample per line with its genotypes in additive encoding format for every SNPs (qst column is sample ids). Missing genotypes can be encoded NA, ./. or -1
-- **Labels**
-    - Class labels
-    - Regression labels
+- **Genotype**: File of samples and their genotypes (genotypes = {0,1,2}, additive encoding) in tab-separated format. One sample per line, first column are sample ids and other columns are samples genotypes for every SNPs. Missing genotypes can be encoded with *NA*, *./.* or *-1*.
+- **Labels**: Samples and their labels in tab-separated format. One sample per line, first column are sample ids followed by their label.
+    - **Class labels**: used to compute the embedding (in classification and regression tasks) and used as prediction in classification task
+    - **Regression labels**: used as prediction in regression task 
 - **Config**
 
 ## Usage
-1. Create Dataset
-2. Partition data into folds
-3. Compute embedding
-4. Compute input features statistics
-5. Train
 
-## 1. Create Dataset
-Create a hdf5 file using genotypes and labels files.
+### Create Dataset
+Create a hdf5 dataset from genotype and label files.
 ```
-usage: create_dataset.py [-h] --exp-path EXP_PATH --task
-                         {classification,regression} --genotypes GENOTYPES
+python create_dataset --help
+
+usage: create_dataset.py [-h] --exp-path EXP_PATH --genotypes GENOTYPES
                          --class-labels CLASS_LABELS
                          [--regression-labels REGRESSION_LABELS]
                          [--ncpus NCPUS] [--out OUT]
@@ -29,40 +25,36 @@ Create hdf5 dataset from genotype and label files.
 
 optional arguments:
   -h, --help            show this help message and exit
-  --exp-path EXP_PATH   Path to directory where results will be written
-  --task {classification,regression}
-                        Model's task. Choices: classification, regression
+  --exp-path EXP_PATH   Path to directory where dataset will be written
   --genotypes GENOTYPES
-                        File of genotypes in tab-separated format (provide
-                        full path to file). Each line contains a sample id
-                        followed by its genotype (additive-encoding format)
-                        for every SNP. Missing genotypes can be encoded NA,
-                        ./. or -1
+                        File of samples and their genotypes (tab-separated
+                        format, one sample per line). Missing genotypes can be
+                        encoded with NA, .\. or -1. Provide full path
   --class-labels CLASS_LABELS
-                        File of samples' class labels (provide full path).
-                        Each line contains a sample id followed by its class
-                        label in tab-separated format.
+                        File of samples and their class labels (tab-separated
+                        format, one sample per line). Provide full path
   --regression-labels REGRESSION_LABELS
-                        File of samples' regression labels (provide full
-                        path). Each line contains a sample id followed by its
-                        label in tab-separated format.
-  --ncpus NCPUS         Number of cpus for parallel loading. Default: 1
-  --out OUT             Filename for the returned dataset. Default:
-                        dataset.hdf5
+                        File of samples and their regression labels (tab-
+                        separated format, one sample per line). Provide full
+                        path
+  --ncpus NCPUS         Number of cpus available to parse genotypes in
+                        parallel. Default: 1
+  --out OUT             Optional filename for the returned dataset. If not
+                        provided the file will be named dataset_date.hdf5
 ```
-### Create dataset for classification task
+
+#### Create dataset for classification task
 ```
 python create_dataset.py \
     --exp-path <experiment_dir_path> \
-    --task classification \
     --genotypes <genotype_file> \
-    --class-labels <class_labels_file> \
+    --class-labels <class_labels_file>
 ```
-### Create dataset for regression task
+
+#### Create dataset for regression task
 ```
 python create_dataset.py \
     --exp-path <experiment_dir_path> \
-    --task regression \
     --genotypes <genotype_file> \
     --class-labels <class_labels_file> \
     --regression-labels <regression_labels_file>
