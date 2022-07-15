@@ -60,6 +60,38 @@ python create_dataset.py \
     --regression-labels <regression_labels_file>
 ```
 
+### Partition data
+Partition samples into folds and split each fold into train and validation sets. This is done before training, because embeddings are computed on each fold.
+
+```
+python partition_data.py --help
+
+usage: partition_data.py [-h] --exp-path EXP_PATH --dataset DATASET
+                         [--seed SEED] [--nb-folds NB_FOLDS]
+                         [--train-valid-ratio TRAIN_VALID_RATIO] [--out OUT]
+
+Partition data into folds. This script creates an array containing samples'
+indexes of every partition
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --exp-path EXP_PATH   Path to directory where partition will be written
+  --dataset DATASET     Hdf5 dataset created with create_dataset.py Provide
+                        full path
+  --seed SEED           Seed for fixing random shuffle of samples before
+                        partitioning. Default: 23
+  --nb-folds NB_FOLDS   Number of folds. Use 1 for no folds. Default: 5
+  --train-valid-ratio TRAIN_VALID_RATIO
+                        Ratio (between 0-1) for split of train and valid sets.
+                        For example, 0.75 will use 75% of data for training
+                        and 25% of data for validation. Default: 0.75
+  --out OUT             Optional filename for dataset partition. If not
+                        provided the file will be named
+                        partition_datasetFilename_date
+```
+
+
+
 ## OLD README
 ## Training pipeline
 
