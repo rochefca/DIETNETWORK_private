@@ -123,7 +123,35 @@ optional arguments:
 ```
 
 ### Generate embedding
+Compute classes genotype frequencies embedding by using samples of the training set.
 
+```
+python generate_embedding.py --help
+
+usage: generate_embedding.py [-h] --exp-path EXP_PATH --dataset DATASET
+                             --partition PARTITION [--ncpus NCPUS]
+                             [--include-valid] [--only-valid] [--out OUT]
+
+Generate embedding
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --exp-path EXP_PATH   Path to directory where embedding will be saved.
+  --dataset DATASET     Hdf5 dataset created with create_dataset.py Provide
+                        full path
+  --partition PARTITION
+                        Npz dataset partition returned by partition_data.py
+                        Provide full path
+  --ncpus NCPUS         Number of cpus available to compute folds embedding in
+                        parallel. Default:1
+  --include-valid       Use this flag to include samples from the validation
+                        set in the embedding computation.
+  --only-valid          Use this flag to compute embedding only on samples of
+                        the validation set
+  --out OUT             Optional filename for embedding file. If not provided
+                        the file will be named
+                        genotype_class_freq_embedding_datasetFilename_date
+```
 
 ## OLD README
 ## Training pipeline
