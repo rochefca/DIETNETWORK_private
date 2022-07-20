@@ -22,33 +22,193 @@ import torch.nn.functional as F
 from torch.profiler import profiler
 
 import helpers.dataset_utils as du
-#import helpers.model as model
+import helpers.model as model
 import helpers.mainloop_utils as mlu
 import helpers.log_utils as lu
-from helpers.model_handlers import dietNetworkHandler, MlpHandler
+from helpers.model_handlers import DietNetworkHandler, MlpHandler
 
 
 def main():
     args = parse_args()
 
+    # Monitoring time to execute the whole experiment
+    exp_start_time = time.time()
+
+    # ----------------------------------------
+    #        EXPERIMENT CONFIGURATION
+    # ----------------------------------------
+    # Experiment's hyperparameters
+    f = open(args.config, 'r')
+    config = yaml.load(f, Loader=yaml.FullLoader)
+    f.close()
+    print('\n---\nExperiment specifications:')
+    pprint.pprint(config)
+    print('---\n')
+
+    # Task : clasification or regression
+    task = args.task
+
+    # Set device
+    print('\n---\nSetting device')
+    print('Cuda available:', torch.cuda.is_available())
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print('device:', device)
+    print('---\n')
+
+    # Fix seed
+    seed = config['seed']
+    torch.backends.cudnn.deterministic = True
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if device.type=='cuda':
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
 
 
+    # ----------------------------------------
+    #                   DATA
+    # ----------------------------------------
+    # Fold number
+    fold = args.which_fold
+
+    print('\n---\nLoading fold {} data'.format(fold))
+
+    # Fold indices
+    indices_byfold = np.load(args.partition, allow_pickle=True)
+    fold_indices = indices_byfold['folds_indexes'][fold]
+
+    # Input features statistics
+    inp_feat_stats = np.load(args.input_features_stats)
+    mus = inp_feat_stats['means_by_fold'][fold]
+    if 'sd_by_fold' in inp_feat_stats.files:
+        sigmas = inp_feat_stats['sd_by_fold'][fold]
+        print('Loaded {} means and {} standard deviations of input features'.format(
+              len(mus), len(sigmas)))
+    else:
+        sigmas = None
+        print('Loaded {} means of input features'.format(len(mus)))
+
+    # TO DO
+    param_init=None
+
+    # Dataset
+    du.FoldDataset.dataset_file = args.dataset
+    du.FoldDataset.f = h5py.File(du.FoldDataset.dataset_file, 'r')
+    du.task = task # this will tell what label to load
+
+    train_set = du.FoldDataset(fold_indices[0])
+    valid_set = du.FoldDataset(fold_indices[1])
+    test_set = du.FoldDataset(fold_indices[2])
+
+    print('Loaded train ({} samples), valid ({} samples) and '
+          'test ({} samples) sets'.format(
+              len(train_set), len(valid_set), len(test_set)))
+
+    print('---\n')
+
+
+    # ----------------------------------------
+    #                 MODEL
+    # ----------------------------------------
+    print('\n---\nInitializing model')
+    # Model architecture (Dietnet or Mlp)
+    if args.model == 'Dietnet':
+        model_handler = DietNetworkHandler(fold, args.embedding, args.dataset,
+                                           config, param_init)
+    elif args.model == 'Mlp':
+        print('Mlp model')
+    else:
+        raise Exception('{} is not a recoognized model'.format(
+            args.model))
+
+    print(model_handler.model)
+
+
+    # ----------------------------------------
+    #         OPTIMIZATION SPECIFICS
+    # ----------------------------------------
+    # Loss
+    if task == 'classification':
+        criterion = nn.CrossEntropyLoss()
+    elif task == 'regression':
+        criterion = nn.MSELoss()
+
+    print('Loss:', criterion)
+    print('---\n')
+
+    # Optimizer
+    lr = config['learning_rate']
+    optimizer = torch.optim.Adam(model_handler.get_parameters(), lr=lr)
+
+    # Max nb of epochs
+    n_epochs = config['epochs']
+
+
+    # ----------------------------------------
+    #          TRAINING LOOP SET UP
+    # ----------------------------------------
+    print('\n---\nTraining loop set up')
+
+    # Where to save fold results
+    exp_identifier = model_handler.get_exp_identifier(
+            config, n_epochs, task, fold)
+
+    results_dirname = 'RESULTS_' + exp_identifier
+    results_fullpath = os.path.join(args.exp_path,
+            args.exp_name, results_dirname)
+
+    lu.create_dir(results_fullpath)
+    print('Results will be saved to:', results_fullpath)
+
+    # Monitoring best and last models
+    bestmodel_fullpath = os.path.join(results_fullpath, 'best_model.pt')
+    lastmodel_fullpath = os.path.join(results_fullpath, 'last_model.pt')
+
+    # Monitoring epoch
+    train_results_by_epoch = []
+    valid_results_by_epoch = []
+
+    # Batch generators
+    batch_size = config['batch_size']
+    print('Batch size :', batch_size)
+
+    train_generator = DataLoader(train_set,
+            batch_size=batch_size, num_workers=0)
+
+    valid_generator = DataLoader(valid_set,
+            batch_size=batch_size, shuffle=False, num_workers=0)
+
+    test_generator = DataLoader(test_set,
+            batch_size=batch_size, shuffle=False, num_workers=0)
+
+    # Baseline
+    print('Computing baseline (forward pass in model with valid set)')
+    baseline_start_time = time.time()
+
+
+
+
+
+
+
+
+
+
+
+
+    """
     # Create dir where training results will be saved
-    """
-    The directory will be created in exp_path/exp_name with the name
-    exp_name_foldi where i is the number of the fold
-    """
+    #The directory will be created in exp_path/exp_name with the name
+    #exp_name_foldi where i is the number of the fold
     out_dir = lu.create_out_dir(args.exp_path, args.exp_name, args.which_fold)
 
     # Create the full config
-    """
-    The full config contains 2 level info
-        - hyperparams : Model hyperparameters (this info is specified in the
-                        config.yaml file provided by user with --config
+    #The full config contains 2 level info
+    #    - hyperparams : Model hyperparameters (this info is specified in the
+    #                    config.yaml file provided by user with --config
 
-        - specifics : paths and files used in the training process
-                      (they are specified with command line arguments)
-    """
+    #    - specifics : paths and files used in the training process
+    #                  (they are specified with command line arguments)
     config = {}
 
     # Hyperparameters
@@ -111,8 +271,9 @@ def main():
                 + '_seed_' + str(config['params']['seed']) \
                 + '.pt'
 
+    """
     # Training
-    train(config, args.comet_ml, args.comet_ml_project_name, args.optimization)
+    #train(config, args.comet_ml, args.comet_ml_project_name, args.optimization)
 
 
 def train(config, comet_log, comet_project_name, optimization_exp):
@@ -566,8 +727,8 @@ def parse_args():
             '--exp-name',
             type=str,
             required=True,
-            help=('Option to name the dir of results. If not provided results '
-                  'will be saved to exp-path/RESULTS_date')
+            help=('Name of directory where to write results in exp-path '
+                  'The results will be written to exp-path/exp-name')
             )
 
     # Files

@@ -1,143 +1,137 @@
 """
 Script to parse and save data into a hdf5 file format
-Creates dataset.hdf5 (default filename)
 """
 import argparse
 import os
 import multiprocessing as mp
 import time
+from datetime import datetime
 
 import numpy as np
 
 import h5py
 
-import helpers.dataset_utils as du
+import helpers.create_dataset_utils as cdu
 
 
 def create_dataset():
     args = parse_args()
     start_time = time.time()
 
-    #----------------------------
-    # Load samples and genotypes
-    #----------------------------
+    #----------------------------------------------
+    #               PARSE GENOTYPES
+    #----------------------------------------------
+    print('\n---')
     genotype_start_time = time.time()
-    if args.parallel_loading:
-        # Multiprocessing to load lines in parallel
-        ncpus = args.ncpus
-        print('Loading genotypes in parallel using', ncpus, 'processes')
-        pool = mp.Pool(processes=ncpus) #this starts ncpus nb of processes
 
-        # Results returned by processes
-        results = []
+    # Multiprocessing to load lines in parallel
+    ncpus = args.ncpus
+    print('Parsing genotypes using {} cpu(s)'.format(ncpus))
+    pool = mp.Pool(processes=ncpus) #this starts ncpus nb of processes
 
-        # Every line is read by a different process
-        with open(args.genotypes, 'r') as f:
-            header_line = next(f)
-            for line in f:
-                # Add sample, sample's genotype accros all SNPs
-                results.append(pool.apply_async(du.load_genotypes_parallel, args=(line,)))
+    # Results returned by processes
+    results = []
 
-        # Get samples and genotypes from multiprocess results
-        print('Parsed genotypes, getting the results')
-        results_values = [p.get() for p in results]
-        samples = np.array([i[0] for i in results_values])
-        genotypes = np.array([i[1] for i in results_values])
-        print('Loaded', genotypes.shape[0], 'samples with', genotypes.shape[1], 'genotypes')
+    # Every line is read by a different process
+    with open(args.genotypes, 'r') as f:
+        header_line = next(f)
+        for line in f:
+            # Add sample, sample's genotype accros all SNPs
+            results.append(pool.apply_async(cdu.parse_genotypes, args=(line,)))
 
-        # Get snps names from header line
-        print('Loading snps names')
-        snps = np.array([i.strip() for i in header_line.split('\t')[1:]], dtype='S')
-        print('Loaded', len(snps), 'snps')
+    # Get parsed samples and genotypes
+    print('Parsed genotypes, getting the results')
+    results_values = [p.get() for p in results]
+    samples = np.array([i[0] for i in results_values])
+    genotypes = np.array([i[1] for i in results_values])
 
+    # Get snps names from header line
+    snps = np.array([i.strip() for i in header_line.split('\t')[1:]], dtype='S')
+
+    print('Parsed {} genotypes of {} samples in {} seconds'.format(
+          len(snps), len(samples), time.time() - genotype_start_time))
+    print('---\n')
+
+
+    #----------------------------------------------
+    #             LOAD CLASS LABELS
+    #----------------------------------------------
+    # Loading class labels from file
+    print('\n---\nLoading class labels')
+    samples_in_labels, labels = cdu.load_labels(args.class_labels)
+    print('Loaded {} class labels of {} samples'.format(
+        len(labels), len(samples_in_labels)))
+
+    # Matching class labels with genotypes
+    print('\nMatching class labels and genotypes using sample ids')
+    ordered_labels = cdu.order_labels(samples, samples_in_labels, labels)
+    print('Matched genotypes and class labels of {} samples'.format(
+          len(ordered_labels)))
+
+    # Encode class labels as numerical values
+    print('\nNumeric encoding of class labels')
+    class_label_names, \
+    encoded_class_labels = cdu.numeric_encode_labels(ordered_labels)
+    print('Encoded {} classes: {}\n---\n'.format(
+          len(class_label_names), class_label_names))
+
+
+    #----------------------------------------------
+    #           LOAD REGRESSION LABELS
+    #----------------------------------------------
+    # Loading regression labels from file
+    if args.regression_labels is not None:
+        print('\n---\nLoading regression labels')
+        samples_in_labels, labels = cdu.load_labels(args.regression_labels)
+        print('Loaded {} regression labels of {} samples'.format(
+              len(labels), len(samples_in_labels)))
+
+        # Matching regression labels with genotypes
+        print('\nMatching regression labels and genotypes using sample ids')
+        ordered_labels = cdu.order_labels(samples, samples_in_labels, labels)
+        print('Matched genotypes and regression labels of {} samples'.format(
+              len(ordered_labels)))
+
+        # Convert regression labels to float
+        regression_labels = ordered_labels.astype('float64')
+        print('---\n')
+
+
+    #----------------------------------------------
+    #           WRITE DATASET TO FILE
+    #----------------------------------------------
+    # Dataset filename
+    if args.out is not None:
+        dataset_filename = args.out + '.hdf5'
     else:
-        print('Loading data')
-        # Load samples, snp names and genotype values
-        samples, snps, genotypes = du.load_genotypes(args.genotypes)
+        dataset_filename = 'dataset_' \
+                + datetime.now().strftime("%Y_%m_%d_%Hh%Mmin%Ssec") + '.hdf5'
 
-    genotype_end_time = time.time()
-    print('Genotypes loading time:', genotype_end_time - genotype_start_time)
+    # Dataset filename with full path
+    dataset_fullpath = os.path.join(args.exp_path, dataset_filename)
 
-    #----------------------------
-    # Load samples and labels
-    #----------------------------
-    label_start_time = time.time()
-    print('\nLoading labels')
-    samples_in_labels, labels = du.load_labels(args.labels)
+    print('\n---\nSaving dataset to {}'.format(dataset_fullpath))
 
-    # Order labels to match samples order obtained from genotypes file
-    print('Ordering labels to match genotypes order, using samples ids')
-    ordered_labels = du.order_labels(samples, samples_in_labels, labels)
+    # Create dataset
+    f = h5py.File(dataset_fullpath, 'w')
 
-    # If labels are categories, encode labels as numbers
-    if args.task == 'classification' :
-        label_names, encoded_labels = numeric_encode_labels(ordered_labels)
-    # If labels are for regression task
-    elif args.task == 'regression':
-        # Convert string to float (this is label for regression task)
-        ordered_labels = ordered_labels.astype('float64')
-
-        # Get class labels for embedding computation
-        print('Loading class labels')
-        samples_in_class_labels, class_labels = du.load_labels(args.class_labels)
-        print('Ordering class labels to match genotypes order, using samples ids')
-        ordered_class_labels=du.order_labels(samples,
-                                             samples_in_class_labels,
-                                             class_labels)
-        # Encode labels as numbers
-        class_label_names, encoded_class_labels = numeric_encode_labels(
-                ordered_class_labels)
-
-    label_end_time = time.time()
-    print('Labels loading time:', label_end_time - label_start_time)
-
-    #----------------------------
-    # Save dataset to file
-    #----------------------------
-    print('\nSaving dataset to', os.path.join(args.exp_path,args.out))
-    f = h5py.File(os.path.join(args.exp_path,args.out), 'w')
     # Input features
     f.create_dataset('inputs', data=genotypes)
-    snps = snps.astype('S') # hdf5 doesn't support np UTF-8 encoding
-    f.create_dataset('snp_names', data=snps)
+    # SNP names (Hdf5 doesn't support np UTF-8 encoding: snps.astype('S'))
+    f.create_dataset('snp_names', data=snps.astype('S'))
     # Samples
-    samples = samples.astype('S')
-    f.create_dataset('samples', data=samples)
-    # Labels
-    if args.task == 'classification':
-        f.create_dataset('labels', data=encoded_labels)
-        label_names = label_names.astype('S')
-        f.create_dataset('label_names', data=label_names)
-
-    elif args.task == 'regression':
-        f.create_dataset('labels', data=ordered_labels)
-        # Labels for embedding computation
-        f.create_dataset('class_labels', data=encoded_class_labels)
-        class_label_names = class_label_names.astype('S')
-        f.create_dataset('class_label_names', data=class_label_names)
+    f.create_dataset('samples', data=samples.astype('S'))
+    # Class labels
+    f.create_dataset('class_labels', data=encoded_class_labels)
+    f.create_dataset('class_label_names', data=class_label_names.astype('S'))
+    # Regression labels
+    if args.regression_labels is not None:
+        f.create_dataset('regression_labels', data=regression_labels)
 
     f.close()
 
-    end_time = time.time()
-    print('\nEnd of execution. Execution time:', end_time-start_time)
-
-
-def onehot_encode_labels(labels):
-    label_names = np.sort(np.unique(labels))
-
-    encoded_labels = np.zeros((len(labels), len(label_names)))
-    for i,label in enumerate(labels):
-        encoded_labels[i,np.where(label_names==label)[0][0]] = 1.0
-
-    return label_names, encoded_labels
-
-
-def numeric_encode_labels(labels):
-    label_names = np.sort(np.unique(labels))
-
-    encoded_labels = [np.where(label_names==i)[0][0] for i in labels]
-
-    return label_names, encoded_labels
+    print('Program executed in {} seconds'.format(time.time()-start_time))
+    print('---\n')
 
 
 def parse_args():
@@ -145,66 +139,58 @@ def parse_args():
             description='Create hdf5 dataset from genotype and label files.'
             )
 
+    # Directory where to save data
     parser.add_argument(
             '--exp-path',
             type=str,
             required=True,
-            help='Path to directory where dataset will be saved'
+            help='Path to directory where dataset will be written'
             )
 
+    # Genotype file
     parser.add_argument(
             '--genotypes',
             type=str,
             required=True,
-            help=('File of genotypes (additive-encoding) in tab-separated '
-                  'format. Each line contains a sample id followed '
-                  'by its genotypes for every SNP. '
-                  'Missing genotypes can be encoded NA, ./. or -1 ')
+            help=('File of samples and their genotypes '
+                  '(tab-separated format, one sample per line). '
+                  'Missing genotypes can be encoded with NA, .\. or -1. '
+                  'Provide full path')
             )
 
+    # Classification labels (classification and regression tasks)
     parser.add_argument(
-            '--parallel-loading',
-            action='store_true',
-            help='Use this flag to load samples in parallel.'
+            '--class-labels',
+            type=str,
+            required=True,
+            help=('File of samples and their class labels '
+                  '(tab-separated format, one sample per line). '
+                  'Provide full path')
             )
 
+    # Regession labels (regression task)
+    parser.add_argument(
+            '--regression-labels',
+            help=('File of samples and their regression labels '
+                  '(tab-separated format, one sample per line). '
+                  'Provide full path')
+            )
+
+    # Number of cpus for parallel loading of genotype file
     parser.add_argument(
             '--ncpus',
             type=int,
-            help='Number of cpus for parallel loading'
+            default=1,
+            help=('Number of cpus available to parse genotypes in parallel. '
+                  'Default: %(default)i')
             )
 
-    parser.add_argument(
-            '--labels',
-            type=str,
-            required=True,
-            help=('File of samples labels. Each line contains a sample '
-                  'id followed by its label in tab-separated format.')
-            )
-
-    parser.add_argument(
-            '--task',
-            choices=['classification', 'regression'],
-            default='classification',
-            help=('Task that determines labels encoding '
-                  'Classification: Labels are numerically encoded '
-                  '(one number per category). '
-                  'Regression: Labels are float. '
-                  'Default: %(default)s')
-            )
-
-    parser.add_argument(
-            '--class-labels',
-            help=('Class labels if embedding is computed by class '
-                  'but the task is regression (--labels are not classes) '
-                  'Like the --labels, this must contain one column '
-                  'with individuals ids and the second column the label')
-            )
-
+    # Filename of returned dataset
     parser.add_argument(
             '--out',
-            default='dataset.hdf5',
-            help='Filename for the returned dataset. Default: %(default)s'
+            help=('Optional filename for the returned dataset. '
+                  'If not provided the file will be named '
+                  'dataset_date.hdf5')
             )
 
     return parser.parse_args()

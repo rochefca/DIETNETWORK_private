@@ -2,117 +2,120 @@ import argparse
 import os
 import multiprocessing as mp
 import time
+from datetime import datetime
 
 import numpy as np
 
 import h5py
 
-import torch
 
-import helpers.dataset_utils as du
-
-
-def get_preprocessing_params():
+def main():
     start_time = time.time()
     args = parse_args()
 
+    # Flag to compute only mean (True or False)
     mean_only = args.mean_only
 
-    # Load data
-    data = h5py.File(os.path.join(args.exp_path,args.dataset))
-    folds_indexes = du.load_folds_indexes(
-            os.path.join(args.exp_path,args.partition)
-            )
+    # Load indices of every fold
+    partition_data = np.load(args.partition, allow_pickle=True)
+    indices_byfold = partition_data['folds_indexes']
 
+    # Dataset
+    dataset_file = h5py.File(args.dataset, 'r')
+
+    # Compute inp feat stats by fold
     means_by_fold = []
     sds_by_fold = []
-    for fold in range(len(folds_indexes)):
-        print('Computing preprocessing parameters of fold', str(fold))
-        # Get fold inputs (x)
-        print('Loading fold {} indexes'.format(fold))
-        fold_indexes = folds_indexes[fold]
+    for fold in range(len(indices_byfold)):
+        print('\n---\nComputing input features statistic of fold', str(fold))
+        fold_start_time = time.time()
+
+        # Indices of the fold
+        fold_indices = indices_byfold[fold]
 
         # Genotypes of training samples
-        print('Getting genotypes of train samples')
-        train_indexes = np.sort(fold_indexes[0]) # sort is a hdf5 requirement
-        x_train = data['inputs'][train_indexes]
+        train_indices = np.sort(fold_indices[0]) # sort is a hdf5 requirement
+        x_train = dataset_file['inputs'][train_indices]
 
-        #x_train = torch.from_numpy(x_train)
+        # Compute statistics of every features in parallel
+        ncpus = args.ncpus
+        print('Computing input features statistics of {} SNPs for {} '
+              'samples using {} cpu(s)'.format(
+              x_train.shape[1], x_train.shape[0], ncpus))
 
-        if args.parallel_loading:
-            # Compute statistics of every features in parallel
-            ncpus = args.ncpus
-            print('Computing input features statistics in parallel using '
-                  '{} processes'.format(ncpus))
-            pool = mp.Pool(processes=ncpus) #this starts ncpus nb of processes
+        pool = mp.Pool(processes=ncpus) #this starts ncpus nb of processes
 
-            # Results that will be returned by processes
-            results = []
+        # Results that will be returned by processes
+        results = []
 
-            # The statistics of every snp feature is computed by a different process
-            nb_snps = x_train.shape[1]
-            for i in range(nb_snps):
-                # Compute snps mean
-                if mean_only :
-                    results.append(
-                            pool.apply_async(
-                                compute_feature_mean, args=(i, x_train[:,i])))
+        # The statistics of every snp feature is computed by a different process
+        nb_snps = x_train.shape[1]
+        for i in range(nb_snps):
+            # Compute snps mean
+            if mean_only :
+                results.append(
+                        pool.apply_async(
+                            compute_feature_mean, args=(i, x_train[:,i])))
 
-                # Compute mean and standard deviation (sd)
-                else:
-                    results.append(
-                            pool.apply_async(
-                                compute_feature_mean_and_sd, args=(i, x_train[:,i])))
+            # Compute mean and standard deviation (sd)
+            else:
+                results.append(
+                        pool.apply_async(
+                            compute_feature_mean_and_sd, args=(i, x_train[:,i])))
 
-            # Get order (snp nb) and mean of features from multiprocess results
-            print('Computed mean of every feature, getting the results')
-            results_values = np.array([np.array(p.get()) for p in results])
+        # Get order (snp nb) and mean of features from multiprocess results
+        print('Computed statistics of all input features, getting the results')
+        results_values = np.array([np.array(p.get()) for p in results])
 
-            print(results_values)
-            print(results_values.shape)
+        # Order stats based on snp nb
+        print('Ordering {} means returned by multiprocessing'.format(
+            len(results_values[:,1])))
+        idx = results_values[:,0].astype(int)
+        ordered_idx_pos = idx.argsort()
 
-            # Order means based on snp nb
-            print('Ordering means returned by multiprocessing')
-            idx = results_values[:,0].astype(int)
-            ordered_idx = idx.argsort()
+        # Ordered means
+        means = results_values[:,1][ordered_idx_pos]
 
-            # Ordered means
-            means = results_values[:,1][ordered_idx]
+        # Ordered sd
+        if not mean_only:
+            print('Ordering {} standard deviations returned by multiprocessing'.format(
+                len(results_values[:,2])))
+            sds = results_values[:,2][ordered_idx_pos]
 
-            # Ordered sd
-            if not mean_only:
-                sds = results_values[:,2][ordered_idx]
-
-            print(means)
-            print(sds)
-
-
-        else:
-            # Compute features means and sd
-            means = du.compute_norm_values(x_train)
-
+        # Append fold statistics
         means_by_fold.append(means)
         sds_by_fold.append(sds)
 
-    data.close()
+        print('Computed fold input features stats in {} seconds\n---\n'.format(
+            time.time()-fold_start_time))
 
-    # Save
-    print('Saving input features statictics to', os.path.join(args.exp_path,args.out))
+    # Close access to h5py dataset file
+    dataset_file.close()
+
+    # Write input features stats to file
+    if args.out is not None:
+        stats_filename = args.out
+    else:
+        stats_filename = 'input_features_stats_' \
+                + args.dataset.split('/')[-1][0:-5] \
+                + '_' \
+                + datetime.now().strftime("%Y_%m_%d_%Hh%Mmin%Ssec")
+
+    stats_fullpath = os.path.join(args.exp_path, stats_filename)
+
     if mean_only:
-        np.savez(os.path.join(args.exp_path,args.out),
-                means_by_fold=means_by_fold)
+        np.savez(stats_fullpath,
+                 means_by_fold=means_by_fold)
 
     else:
-        np.savez(os.path.join(args.exp_path,args.out),
-                means_by_fold=means_by_fold,
-                sd_by_fold=sds_by_fold)
+        np.savez(stats_fullpath,
+                 means_by_fold=means_by_fold,
+                 sd_by_fold=sds_by_fold)
 
-    end_time=time.time()
-    print('End of execution. Execution time:', end_time-start_time, 'seconds')
-
-
-def compute_all_features_mean():
-    pass
+    print('\n---')
+    print('Input features stats were saved to {}'.format(stats_fullpath))
+    print('Execution time {} seconds\n---\n'.format(
+          time.time() - start_time))
 
 
 def compute_feature_mean(i, x):
@@ -156,7 +159,8 @@ def compute_feature_mean_and_sd(i, x):
 def parse_args():
     parser = argparse.ArgumentParser(
             description=('Compute features means and standard deviations '
-                         'for input normalization at training time')
+                         'for missing values filing and input normalization '
+                         'at training time')
             )
 
     # Path
@@ -164,29 +168,28 @@ def parse_args():
             '--exp-path',
             type=str,
             required=True,
-            help='Path to experiment directory where to save embedding. '
+            help=('Path to directory where input features statistics will '
+                  'be written')
             )
 
     # Files
     parser.add_argument(
             '--dataset',
             type=str,
-            default='dataset.hdf5',
-            help=('Filename of dataset returned by create_dataset.py '
-                  'The file must be in directory specidifed with exp-path. '
-                  'Default: %(default)s')
+            required=True,
+            help=('Hdf5 dataset created with create_dataset.py. '
+                  'Provide full path')
             )
 
     parser.add_argument(
             '--partition',
             type=str,
-            default='partitioned_idx.npz',
-            help=('Filename of folds indexes returned by partition_data.py '
-                  'The file must be in directory specified with exp-path. '
-                  'Default: %(default)s')
+            required=True,
+            help=('Npz dataset partition returned by partition_data.py '
+                  'Provide full path')
             )
 
-    # Which statistic tom compute (mean or mean+sd)
+    # Which statistic to compute (mean or mean+sd)
     parser.add_argument(
             '--mean-only',
             action='store_true',
@@ -194,29 +197,25 @@ def parse_args():
                   'and not the standard deviations')
             )
 
-    # Parallel computation
-    parser.add_argument(
-            '--parallel-loading',
-            action='store_true',
-            help='Use this flag to load samples in parallel.'
-            )
-
     parser.add_argument(
             '--ncpus',
             type=int,
-            help='Number of cpus for parallel loading'
+            default=1,
+            help=('Number of cpus for parallel computation of means '
+                  'and of standard deviations. Default: %(default)i')
             )
 
     # Output
     parser.add_argument(
             '--out',
             type=str,
-            default='input_features_statistics.npz',
-            help='Output filename. Default: %(default)s'
+            help=('Optional filename for input features statistics file. '
+                  'If not provided the file will be named '
+                  'input_features_stats_datasetFilename_date')
             )
 
     return parser.parse_args()
 
 
 if __name__ == '__main__':
-    get_preprocessing_params()
+    main()

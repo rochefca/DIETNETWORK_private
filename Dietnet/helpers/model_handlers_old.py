@@ -1,12 +1,23 @@
 import os
+import argparse
+import sys
+import time
+import yaml
+import pprint
+
+import h5py
 
 import numpy as np
 
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
+import helpers.dataset_utils as du
 import helpers.model as model
+import helpers.mainloop_utils as mlu
+import helpers.log_utils as lu
 
 
 class modelHandler:
@@ -16,11 +27,11 @@ class modelHandler:
     This class contains methods for model initialization and forward/reverse pass
     """
 
-    def __init__(self, model):
-        self.model = model
+    def __init__(self, config, device):
+        raise NotImplementedError
 
-    def forward(self, x):
-        return self.model(x)
+    def forwardpass(self, x):
+        raise NotImplementedError
 
     def save(self):
         raise NotImplementedError
@@ -34,26 +45,94 @@ class modelHandler:
     def eval_mode(self):
         raise NotImplementedError
 
-    def get_parameters(self):
-        return self.model.parameters()
+    def get_trainable_parameters(self):
+        raise NotImplementedError
 
     def log_weight_initialization(self):
         raise NotImplementedError
 
-    def get_exp_identifier(self, config, n_epochs, task, fold):
-        raise NotImplementedError
 
+class dietNetworkHandler(modelHandler):
 
-class DietNetworkHandler(modelHandler):
+    def __init__(self, config, device):
 
-    def __init__(self, fold, emb_filename, dataset_filename, config, param_init):
-        # Make the Dietnet model
-        dn_model = model.DietNetwork(fold, emb_filename, dataset_filename, config, param_init)
+        # ----------------------------------------
+        #             LOAD EMBEDDING
+        # ----------------------------------------
+        print('Loading embedding')
+        emb = du.load_embedding(os.path.join(
+            config['specifics']['exp_path'],
+            config['specifics']['embedding']),
+            config['params']['fold'])
 
-        super(DietNetworkHandler, self).__init__(dn_model)
+        # Send to device
+        emb = emb.to(device)
+        emb = emb.float()
 
-        #self.model = comb_model
-        #self.emb = emb
+        # Normalize embedding
+        emb_norm = (emb ** 2).sum(0) ** 0.5
+        emb = emb/emb_norm
+
+        # ----------------------------------------
+        #               MAKE MODEL
+        # ----------------------------------------
+        # Aux net input size (nb of emb features)
+        if len(emb.size()) == 1:
+            n_feats_emb = 1 # input of aux net, 1 value per SNP
+            emb = torch.unsqueeze(emb, dim=1) # match size in Linear fct (nb_snpsx1)
+        else:
+            n_feats_emb = emb.size()[1] # input of aux net
+
+        # Main net input size (nb of features)
+        n_feats = emb.size()[0] # input of main net
+
+        # Main net output size (nb targets)
+        dataset_file = os.path.join(config['specifics']['exp_path'],
+                                    config['specifics']['dataset'])
+        if config['specifics']['task'] == 'classification':
+            with h5py.File(dataset_file, 'r') as f:
+                n_targets = len(f['label_names'])
+        elif config['specifics']['task'] == 'regression':
+            n_targets = 1
+
+        print('\n***Nb features in models***')
+        print('n_feats_emb:', n_feats_emb)
+        print('n_feats:', n_feats)
+        print('n_targets:', n_targets)
+
+        # Model init
+        print('Initiating the model')
+        model_init_start_time = time.time()
+        comb_model = model.CombinedModel(
+                n_feats=n_feats_emb,
+                n_hidden_u_aux=config['params']['nb_hidden_u_aux'],
+                n_hidden_u_main=config['params']['nb_hidden_u_aux'][-1:] \
+                                +config['params']['nb_hidden_u_main'],
+                n_targets=n_targets,
+                param_init=config['specifics']['param_init'],
+                aux_uniform_init_limit=config['params']['uniform_init_limit'],
+                input_dropout=config['params']['input_dropout'])
+        print('Model initiated in: ', time.time()-model_init_start_time, 'seconds')
+
+        # Data parallel: this is not implemented yet
+        if torch.cuda.device_count() > 1:
+            print("Let's use", torch.cuda.device_count(), "GPUs!")
+            comb_model.disc_net = nn.DataParallel(comb_model.disc_net)
+
+        # Note: runs script in single GPU mode only!
+        print('Sending model to device')
+        comb_model.to(device)
+        #print(summary(comb_model.feat_emb, input_size=(294427,1,1,78)))
+        #print(summary(comb_model.disc_net, input_size=[(138,1,1,294427),(100,294427)]))
+
+        self.model = comb_model
+        self.emb = emb
+
+    def get_trainable_parameters(self):
+        """
+        Get trainable parameters (for torch optimizer)
+        """
+        return self.model.parameters()
 
     def forwardpass(self, x):
         return self.model(self.emb, x)
@@ -101,24 +180,6 @@ class DietNetworkHandler(modelHandler):
     def eval_mode(self):
         self.model.eval()
 
-    def get_exp_identifier(self, config, n_epochs, task, fold):
-        exp_identifier =  'Fold' + str(fold) \
-                + '_' + task \
-                + '_auxu_' \
-                    + str(config['nb_hidden_u_aux'])[1:-1].replace(', ','_') \
-                + '_mainu_' \
-                    + str(config['nb_hidden_u_aux'][-1]) + '_' \
-                    + str(config['nb_hidden_u_main'])[1:-1].replace(', ','_') \
-                + '_inpdrop_' + str(config['input_dropout']) \
-                + '_lr_' + str(config['learning_rate']) \
-                + '_lra_' + str(config['learning_rate_annealing']) \
-                + '_uniform_init_limit_' + str(config['uniform_init_limit']) \
-                + '_epochs_' + str(n_epochs) \
-                + '_patience_' + str(config['patience']) \
-                + '_seed_' + str(config['seed'])
-
-        return exp_identifier
-
 
 class MlpHandler(modelHandler):
 
@@ -127,7 +188,7 @@ class MlpHandler(modelHandler):
         # ----------------------------------------
         #               MAKE MODEL
         # ----------------------------------------
-
+        
         # load emb to infer number of features
         print('Loading embedding')
         emb = du.load_embedding(os.path.join(
@@ -143,7 +204,7 @@ class MlpHandler(modelHandler):
 
         # Main net output size (nb targets)
         if config['specifics']['task'] == 'classification':
-
+            
             dataset_file = os.path.join(config['specifics']['exp_path'],
                                         config['specifics']['dataset'])
             with h5py.File(dataset_file, 'r') as f:
