@@ -1,4 +1,5 @@
 import time
+import pprint
 import numpy as np
 
 import torch
@@ -10,21 +11,25 @@ from helpers import model
 from helpers import dataset_utils as du
 
 
-def train_step(mod_handler, device, optimizer, train_generator,
-               set_size, criterion, mus, sigmas, task, normalize):
-    # Monitoring set up : Minibatch
-    minibatch_loss = []
-    minibatch_n_right = [] # nb of good classifications
+def train_step(mod_handler, device, train_generator,
+               mus, sigmas, normalize, optimizer):
 
-    # Looping through minibatches
-    for x_batch, y_batch, _ in train_generator:
-        with profiler.record_function('To device'):
-            # Send data to device
-            x_batch, y_batch = x_batch.to(device), y_batch.to(device)
-            x_batch = x_batch.float()
+    task_handler = mod_handler.task_handler
 
-            if task == 'regression':
-                y_batch = y_batch.unsqueeze(1)
+    # Remove batch results from previous epoch
+    task_handler.zero_batch_results()
+
+    # Looping through batches
+    for batch_nb, (x_batch, y_batch, samples) in enumerate(train_generator):
+        # Append batch samples and labels
+        task_handler.compile_samples(samples)
+        task_handler.compile_labels(y_batch)
+
+        # Send data to device
+        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+        x_batch = x_batch.float()
+
+        y_batch = task_handler.format_ybatch(y_batch)
 
         # Replace missing values
         du.replace_missing_values(x_batch, mus)
@@ -36,12 +41,11 @@ def train_step(mod_handler, device, optimizer, train_generator,
         # Reset optimizer
         optimizer.zero_grad()
 
-
         # Forward pass
-        model_out = mod_handler.forwardpass(x_batch)
+        model_out = mod_handler.forward(x_batch)
 
-        # Compute loss (softmax computation done in loss)
-        loss = criterion(model_out, y_batch)
+        # Loss
+        loss = task_handler.compute_loss(model_out, y_batch)
 
         # Compute gradients
         loss.backward()
@@ -49,62 +53,36 @@ def train_step(mod_handler, device, optimizer, train_generator,
         # Optimize
         optimizer.step()
 
-        # Monitoring : Minibatch
-        minibatch_loss.append(loss.item()) # mean loss of the minibatch
+        # Batch sum loss (to account for unequal batches)
+        sum_loss = task_handler.get_sum_loss(loss, y_batch)
 
-        # Classification: keep nb of good predictions for accuracy computation
-        if task == 'classification':
-            _, pred = get_predictions(model_out) # softmax computation
-            minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
+        # Append sum loss to batch results
+        task_handler.batches_results['losses'] = np.append(
+                task_handler.batches_results['losses'], sum_loss)
 
-        #batch_time = time.time() - batch_start_time
-        #print('Batch time:', batch_time, flush=True)
+        # Append other batch results (ex: pred accuracy in classification)
+        task_handler.get_batch_results(model_out, y_batch)
 
-        """
-        if comb_model.training:
-            with torch.no_grad():
-                filename = 'COMPARE/train_loop_regress.pt'
-                torch.save(d, filename)
-        break
-        """
-
-    # Monitoring: Epoch
-    epoch_loss = np.array(minibatch_loss).mean()
-
-    if task == 'classification':
-        epoch_acc = np.array(minibatch_n_right).sum() / float(set_size)*100
-        epoch_result = (epoch_loss, epoch_acc)
-
-    elif task == 'regression':
-        epoch_result = (epoch_loss,)
-
-    return epoch_result
+    return task_handler.batches_results.copy()
 
 
+def eval_step(mod_handler, device, valid_generator, mus, sigmas, normalize):
 
-def eval_step(mod_handler, device, valid_generator,
-              set_size, criterion, mus, sigmas, task, normalize):
+    task_handler = mod_handler.task_handler
 
-    # Monitoring: Minibatch setup
-    minibatch_loss = []
-    minibatch_n_right = [] # nb of good classifications
-
-    test_pred = torch.tensor([]).to(device) #prediction of each sample
-    test_ys = np.array([])
-    test_samples = np.array([]) #test samples
+    # Remove batch results of previous epoch
+    task_handler.zero_batch_results() # reset batch result
 
     for batch, (x_batch, y_batch, samples) in enumerate(valid_generator):
-        # Save samples
-        test_samples = np.concatenate([test_samples, samples])
-        # Save labels
-        test_ys = np.concatenate([test_ys, y_batch])
+        # Append batch samples and labels
+        task_handler.compile_samples(samples)
+        task_handler.compile_labels(y_batch)
 
         # Send data to device
         x_batch, y_batch = x_batch.to(device), y_batch.to(device)
         x_batch = x_batch.float()
 
-        if task == 'regression':
-            y_batch = y_batch.unsqueeze(1)
+        y_batch = task_handler.format_ybatch(y_batch)
 
         # Replace missing values
         du.replace_missing_values(x_batch, mus)
@@ -114,37 +92,28 @@ def eval_step(mod_handler, device, valid_generator,
             x_batch = du.normalize(x_batch, mus, sigmas)
 
         # Forward pass
-        model_out = mod_handler.forwardpass(x_batch)
+        model_out = mod_handler.forward(x_batch)
 
         # Loss
-        loss = criterion(model_out, y_batch)
+        loss = task_handler.compute_loss(model_out, y_batch)
 
-        # Monitoring : Minibatch
-        weighted_loss = loss.item()*len(y_batch) # for unequal minibatches
-        minibatch_loss.append(weighted_loss)
+        # Batch sum loss (to account for unequal minibatches)
+        sum_loss = task_handler.get_sum_loss(loss, y_batch)
 
-        # Classification: keep nb of good predictions for accuracy computation
-        if task == 'classification':
-            _, pred = get_predictions(model_out) # softmax computation
-            minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
+        # Append sum loss to batch results
+        task_handler.batches_results['losses'] = np.append(
+                task_handler.batches_results['losses'], sum_loss)
 
-        elif task == 'regression':
-            test_pred = torch.cat((test_pred,comb_model_out.detach()), dim=0)
+        # Append other batch results (ex: pred accuracy in classification)
+        task_handler.get_batch_results(model_out, y_batch)
 
+        # TO DO :
+        #elif task == 'regression':
+        #    test_pred = torch.cat((test_pred,comb_model_out.detach()), dim=0)
 
-    epoch_loss = np.array(minibatch_loss).sum()/set_size
-    #epoch_loss = np.array(minibatch_loss).mean()
+    return task_handler.batches_results.copy()
 
-    if task == 'classification':
-        epoch_acc = np.array(minibatch_n_right).sum() / float(set_size)*100
-        epoch_result = (epoch_loss, epoch_acc)
-
-    elif task == 'regression':
-        epoch_result = (epoch_loss,test_pred,test_ys,test_samples)
-
-    return epoch_result
-
-
+"""
 def test_step(mod_handler, device, test_generator,
         set_size, criterion, mus, sigmas, task, normalize):
     # Saving data seen while looping through minibatches
@@ -176,7 +145,7 @@ def test_step(mod_handler, device, test_generator,
             x_batch = du.normalize(x_batch, mus, sigmas)
 
         # Forward pass
-        model_out = mod_handler.forwardpass(x_batch)
+        model_out = mod_handler.forward(x_batch)
 
         # Loss
         loss = criterion(model_out, y_batch)
@@ -217,7 +186,7 @@ def test_step(mod_handler, device, test_generator,
         test_results = (test_loss, test_pred, r)
 
     return test_samples, test_ys, test_results
-
+"""
 
 def get_last_layers(comb_model, device, test_generator, set_size,
                     mus, sigmas, emb, task):

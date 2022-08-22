@@ -1,22 +1,21 @@
-"""
-Script to parse and save data into a hdf5 file format
-"""
 import argparse
 import os
-import multiprocessing as mp
 import time
 from datetime import datetime
+import multiprocessing as mp
 
 import numpy as np
-
-import h5py
 
 import helpers.create_dataset_utils as cdu
 
 
-def create_dataset():
-    args = parse_args()
+# Additive encoding : genotypes 0, 1 and 2
+NB_POSSIBLE_GENOTYPES = 3
+
+
+def main():
     start_time = time.time()
+    args = parse_args()
 
     #----------------------------------------------
     #               PARSE GENOTYPES
@@ -52,7 +51,6 @@ def create_dataset():
           len(snps), len(samples), time.time() - genotype_start_time))
     print('---\n')
 
-
     #----------------------------------------------
     #             LOAD CLASS LABELS
     #----------------------------------------------
@@ -60,7 +58,7 @@ def create_dataset():
     print('\n---\nLoading class labels')
     samples_in_labels, labels = cdu.load_labels(args.class_labels)
     print('Loaded {} class labels of {} samples'.format(
-        len(labels), len(samples_in_labels)))
+          len(labels), len(samples_in_labels)))
 
     # Matching class labels with genotypes
     print('\nMatching class labels and genotypes using sample ids')
@@ -75,79 +73,61 @@ def create_dataset():
     print('Encoded {} classes: {}\n---\n'.format(
           len(class_label_names), class_label_names))
 
-
     #----------------------------------------------
-    #           LOAD REGRESSION LABELS
+    #       COMPUTE GENOTYPE CLASS FREQUENCY
     #----------------------------------------------
-    # Loading regression labels from file
-    if args.regression_labels is not None:
-        print('\n---\nLoading regression labels')
-        samples_in_labels, labels = cdu.load_labels(args.regression_labels)
-        print('Loaded {} regression labels of {} samples'.format(
-              len(labels), len(samples_in_labels)))
+    # Total number of classes
+    nb_class = len(class_label_names)
+    class_to_count = {}
 
-        # Matching regression labels with genotypes
-        print('\nMatching regression labels and genotypes using sample ids')
-        ordered_labels = cdu.order_labels(samples, samples_in_labels, labels)
-        print('Matched genotypes and regression labels of {} samples'.format(
-              len(ordered_labels)))
+    # Compute sum of genotypes (0-1-2) per class
+    genotypes = genotypes.transpose() # rows are snps, col are inds
+    embedding = np.zeros((genotypes.shape[0],nb_class*NB_POSSIBLE_GENOTYPES))
+    encoded_class_labels = np.array(encoded_class_labels)
+    for c in range(nb_class):
+        # Select genotypes for samples of same class
+        class_genotypes = genotypes[:,encoded_class_labels==c]
+        nb = class_genotypes.shape[1] #nb of samples in that class
+        #print('Class:', c, 'NB:', nb)
+        class_to_count[c] = nb
+        for genotype in range(NB_POSSIBLE_GENOTYPES):
+            col = NB_POSSIBLE_GENOTYPES*c+genotype
+            embedding[:,col] = (class_genotypes == genotype).sum(axis=1)/nb
 
-        # Convert regression labels to float
-        regression_labels = ordered_labels.astype('float64')
-        print('---\n')
+    print('Computed embedding of {} classes with following number of '
+          'samples per class {}'.format(nb_class, class_to_count))
+    print('---')
 
-
-    #----------------------------------------------
-    #           WRITE DATASET TO FILE
-    #----------------------------------------------
-    # Dataset filename
+    # Write embedding to file
     if args.out is not None:
-        dataset_filename = args.out + '.hdf5'
+        emb_filename = args.out
     else:
-        dataset_filename = 'dataset_' \
-                + datetime.now().strftime("%Y_%m_%d_%Hh%Mmin%Ssec") + '.hdf5'
+        emb_filename = 'genotype_class_freq_embedding_' \
+                       + datetime.now().strftime("%Y_%m_%d_%Hh%Mmin%Ssec")
 
-    # Dataset filename with full path
-    dataset_fullpath = os.path.join(args.exp_path, dataset_filename)
+    emb_fullpath = os.path.join(args.exp_path, emb_filename)
 
-    print('\n---\nSaving dataset to {}'.format(dataset_fullpath))
+    print('\n---\nEmbeddings generated in {} seconds'.format(
+        time.time()-start_time))
 
-    # Create dataset
-    f = h5py.File(dataset_fullpath, 'w')
+    print('Saving results to {}'.format(emb_fullpath))
+    np.savez(emb_fullpath, emb=embedding, label_names=class_label_names)
 
-    # Input features
-    f.create_dataset('inputs', data=genotypes)
-    # SNP names (Hdf5 doesn't support np UTF-8 encoding: snps.astype('S'))
-    f.create_dataset('snp_names', data=snps.astype('S'))
-    # Samples
-    f.create_dataset('samples', data=samples.astype('S'))
-    # Class labels
-    f.create_dataset('class_labels', data=encoded_class_labels)
-    f.create_dataset('class_label_names', data=class_label_names.astype('S'))
-    # Regression labels
-    if args.regression_labels is not None:
-        f.create_dataset('regression_labels', data=regression_labels)
-
-    f.close()
-
-    print('Program executed in {} seconds'.format(time.time()-start_time))
     print('---\n')
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-            description='Create hdf5 dataset from genotype and label files.'
+            description='Generate embedding'
             )
 
-    # Directory where to save data
     parser.add_argument(
             '--exp-path',
             type=str,
             required=True,
-            help='Path to directory where dataset will be written'
+            help='Path to directory where embedding will be saved. '
             )
 
-    # Genotype file
     parser.add_argument(
             '--genotypes',
             type=str,
@@ -158,7 +138,6 @@ def parse_args():
                   'Provide full path')
             )
 
-    # Classification labels (classification and regression tasks)
     parser.add_argument(
             '--class-labels',
             type=str,
@@ -168,33 +147,24 @@ def parse_args():
                   'Provide full path')
             )
 
-    # Regession labels (regression task)
-    parser.add_argument(
-            '--regression-labels',
-            help=('File of samples and their regression labels '
-                  '(tab-separated format, one sample per line). '
-                  'Provide full path')
-            )
-
-    # Number of cpus for parallel loading of genotype file
     parser.add_argument(
             '--ncpus',
             type=int,
             default=1,
-            help=('Number of cpus available to parse genotypes in parallel. '
-                  'Default: %(default)i')
+            help=('Number of cpus available to load genotypes in parallel '
+                  'Default:%(default)i')
             )
 
-    # Filename of returned dataset
     parser.add_argument(
             '--out',
-            help=('Optional filename for the returned dataset. '
-                  'If not provided the file will be named '
-                  'dataset_date.hdf5')
+            type=str,
+            help=('Optional filename for embedding file. If not provided '
+                  'the file will be named '
+                  'genotype_class_freq_embedding_date')
             )
 
     return parser.parse_args()
 
 
 if __name__ == '__main__':
-    create_dataset()
+    main()

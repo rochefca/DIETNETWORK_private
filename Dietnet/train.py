@@ -22,119 +22,327 @@ import torch.nn.functional as F
 from torch.profiler import profiler
 
 import helpers.dataset_utils as du
-#import helpers.model as model
+import helpers.model as model
 import helpers.mainloop_utils as mlu
 import helpers.log_utils as lu
-from helpers.model_handlers import dietNetworkHandler, MlpHandler
+from helpers.model_handlers import DietNetworkHandler, MlpHandler
+from helpers.task_handlers import ClassificationHandler, RegressionHandler
 
 
 def main():
+    print('in main', flush=True)
     args = parse_args()
 
+    # Monitoring time to execute the whole experiment
+    exp_start_time = time.time()
 
-
-    # Create dir where training results will be saved
-    """
-    The directory will be created in exp_path/exp_name with the name
-    exp_name_foldi where i is the number of the fold
-    """
-    out_dir = lu.create_out_dir(args.exp_path, args.exp_name, args.which_fold)
-
-    # Create the full config
-    """
-    The full config contains 2 level info
-        - hyperparams : Model hyperparameters (this info is specified in the
-                        config.yaml file provided by user with --config
-
-        - specifics : paths and files used in the training process
-                      (they are specified with command line arguments)
-    """
-    config = {}
-
-    # Hyperparameters
-    f = open(os.path.join(args.exp_path, args.exp_name, args.config), 'r')
-    config_hyperparams = yaml.load(f, Loader=yaml.FullLoader)
-
-    config['params'] = config_hyperparams
-
-    # Add fold to config hyperparams
-    config['params']['fold'] = args.which_fold
-
-    # Specifics
-    specifics = {}
-    specifics['model'] = args.model
-    specifics['exp_path'] = args.exp_path
-    specifics['exp_name'] = args.exp_name
-    specifics['out_dir'] = out_dir
-    specifics['partition'] = args.partition
-    specifics['dataset'] = args.dataset
-    specifics['embedding'] = args.embedding
-    specifics['normalize'] = args.normalize
-    specifics['input_features_means'] = args.input_features_means
-    specifics['task'] = args.task
-    specifics['param_init'] = args.param_init
-
-    config['specifics'] = specifics
-
-    # This is the full configurations for the training
-    print('\n --- Experiment hyperparameters and specifics')
+    # ----------------------------------------
+    #        EXPERIMENT CONFIGURATION
+    # ----------------------------------------
+    # Experiment's hyperparameters
+    f = open(args.config, 'r')
+    config = yaml.load(f, Loader=yaml.FullLoader)
+    f.close()
+    print('\n---\nExperiment specifications:')
     pprint.pprint(config)
+    print('---\n')
 
-    # Save experiment configurations (out_dir/full_config.log)
-    if not args.optimization:
-        lu.save_exp_params(config['specifics']['out_dir'],'full_config.log', config)
-    
+    # Task : clasification or regression
+    task = args.task
+
+    # Set device
+    print('\n---\nSetting device')
+    print('Cuda available:', torch.cuda.is_available())
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print('device:', device)
+    print('---\n')
+
+    # Fix seed
+    seed = config['seed']
+    torch.backends.cudnn.deterministic = True
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if device.type=='cuda':
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    # ----------------------------------------
+    #               TASK HANDLER
+    # ----------------------------------------
+    if args.task == 'classification':
+        criterion = nn.CrossEntropyLoss()
+        task_handler = ClassificationHandler(args.dataset, criterion)
+
+    elif args.task == 'regression':
+        criterion = nn.MSELoss()
+        task_handler = RegressionHandler(args.dataset, criterion)
+
+    # ----------------------------------------
+    #                   DATA
+    # ----------------------------------------
+    # Fold number
+    fold = args.which_fold
+
+    print('\n---\nLoading fold {} data'.format(fold))
+
+    # Fold indices
+    indices_byfold = np.load(args.partition, allow_pickle=True)
+    fold_indices = indices_byfold['folds_indexes'][fold]
+
+    # Input features statistics
+    inp_feat_stats = np.load(args.input_features_stats)
+
+    mus = inp_feat_stats['means_by_fold'][fold]
+    # Send to GPU
+    mus = torch.from_numpy(mus).float().to(device)
+
+    if 'sd_by_fold' in inp_feat_stats.files:
+        sigmas = inp_feat_stats['sd_by_fold'][fold]
+        print('Loaded {} means and {} standard deviations of input features'.format(
+              len(mus), len(sigmas)))
+
+        # Send to GPU
+        sigmas = torch.from_numpy(sigmas).float().to(device)
+    else:
+        sigmas = None
+        print('Loaded {} means of input features'.format(len(mus)))
+
+    # TO DO
+    param_init=None
+
+    # Dataset
+    du.FoldDataset.dataset_file = args.dataset
+    du.FoldDataset.f = h5py.File(du.FoldDataset.dataset_file, 'r')
+    # This tells what label to load in getitem
+    du.FoldDataset.task_handler = task_handler
+
+    train_set = du.FoldDataset(fold_indices[0])
+    valid_set = du.FoldDataset(fold_indices[1])
+    test_set = du.FoldDataset(fold_indices[2])
+
+    print('Loaded train ({} samples), valid ({} samples) and '
+          'test ({} samples) sets'.format(
+              len(train_set), len(valid_set), len(test_set)))
+
+    print('---\n')
+
+
+    # ----------------------------------------
+    #                 MODEL
+    # ----------------------------------------
+    print('\n---\nInitializing model')
+
+    # Model architecture (Dietnet or Mlp)
     if args.model == 'Dietnet':
-        exp_name = 'model_params' \
-                + '_epochs_' + str(config['params']['epochs']) \
-                + '_inpdrop_' + str(config['params']['input_dropout']) \
-                + '_lr_' + str(config['params']['learning_rate']) \
-                + '_lra_' + str(config['params']['learning_rate_annealing']) \
-                + '_auxu_' \
-                    + str(config['params']['nb_hidden_u_aux'])[1:-1].replace(', ','_') \
-                + '_mainu_' \
-                    + str(config['params']['nb_hidden_u_aux'][-1]) + '_' \
-                    + str(config['params']['nb_hidden_u_main'])[1:-1].replace(', ','_') \
-                + '_uniform_init_limit_' + str(config['params']['uniform_init_limit']) \
-                + '_patience_' + str(config['params']['patience']) \
-                + '_seed_' + str(config['params']['seed']) \
-                + '.pt'
+        model_handler = DietNetworkHandler(task_handler, fold,
+                args.embedding, device, args.dataset, config, param_init)
     elif args.model == 'Mlp':
-        exp_name = 'model_params' \
-                + '_epochs_' + str(config['params']['epochs']) \
-                + '_inpdrop_' + str(config['params']['input_dropout']) \
-                + '_lr_' + str(config['params']['learning_rate']) \
-                + '_lra_' + str(config['params']['learning_rate_annealing']) \
-                + '_mlp_' \
-                    + str(config['params']['n_hidden_u'])[1:-1].replace(', ','_') \
-                + '_patience_' + str(config['params']['patience']) \
-                + '_seed_' + str(config['params']['seed']) \
-                + '.pt'
+        print('Mlp model to do')
+    else:
+        raise Exception('{} is not a recognized model'.format(
+            args.model))
+
+    # Send mmodel to GPU
+    model_handler.model.to(device)
+
+    print(model_handler.model)
+
+    # Optimizer
+    lr = config['learning_rate']
+    optimizer = torch.optim.Adam(model_handler.get_parameters(), lr=lr)
+
+
+    # ----------------------------------------
+    #          TRAINING LOOP SET UP
+    # ----------------------------------------
+    print('\n---\nTraining loop set up')
+    # Where to save fold results
+    exp_identifier = model_handler.get_exp_identifier(config, fold)
+
+    results_dirname = 'RESULTS_' + exp_identifier
+    results_fullpath = os.path.join(args.exp_path,
+            args.exp_name, results_dirname)
+
+    lu.create_dir(results_fullpath)
+    print('Results will be saved to:', results_fullpath)
+
+    # Monitoring best and last models
+    bestmodel_fullpath = os.path.join(results_fullpath, 'best_model.pt')
+    lastmodel_fullpath = os.path.join(results_fullpath, 'last_model.pt')
+
+    # Batch generators
+    batch_size = config['batch_size']
+    train_generator = DataLoader(train_set,
+            batch_size=batch_size, num_workers=0)
+
+    valid_generator = DataLoader(valid_set,
+            batch_size=batch_size, shuffle=False, num_workers=0)
+
+    test_generator = DataLoader(test_set,
+            batch_size=batch_size, shuffle=False, num_workers=0)
+
+    print('---\n')
+
+    # ----------------------------------------
+    #             TRAINING LOOP
+    # ----------------------------------------
+    training_start_time = time.time()
+
+    # Max nb of epochs
+    n_epochs = config['epochs']
+    start_epoch = 0 # first epoch
+
+    # Patience for early stopping
+    patience = 0
+    max_patience = config['patience']
+    has_early_stoped = False
+
+    # Baseline
+    if not args.resume_training:
+        print('\n---\nComputing baseline (forward pass in model with valid set)')
+        baseline_start_time = time.time()
+
+        model_handler.model.eval()
+
+        baseline = mlu.eval_step(model_handler, device, valid_generator,
+                                 mus, sigmas, args.normalize)
+
+        # Print baseline results
+        model_handler.task_handler.print_baseline_results(baseline)
+        print('Computed baseline in {} seconds'.format(
+            time.time() - baseline_start_time))
+
+        # Init best results
+        model_handler.task_handler.init_best_results(baseline)
+
+    # Resume training
+    else:
+        print('\n---\nResuming training')
+        # Load last model
+        checkpoint = torch.load(lastmodel_fullpath)
+
+        # Set model weights with weights from last model
+        model_handler.model.load_state_dict(checkpoint['model_state_dict'])
+
+        # Set results from best model
+        best_checkpoint = torch.load(bestmodel_fullpath)
+        model_handler.task_handler.resume_best_results(best_checkpoint['best_results'])
+
+        # Set start epoch
+        start_epoch = checkpoint['epoch']
+
+        # Set patience
+        patience = checkpoint['patience']
+
+        print('Loaded last model from epoch {}'.format(start_epoch))
+        print('Patience is {}'.format(patience))
+        model_handler.task_handler.print_resumed_best_results(best_checkpoint['best_results'])
+
+    # Training loop
+    print('\nTraining:')
+    for epoch in range(start_epoch, n_epochs):
+        epoch_start_time = time.time()
+        print('Epoch {} of {}'.format(epoch+1, n_epochs), flush=True)
+
+        # Train step
+        model_handler.model.train()
+        train_results = mlu.train_step(model_handler, device, train_generator,
+                                       mus, sigmas, args.normalize, optimizer)
+
+        # Eval step
+        model_handler.model.eval()
+        evaluated_train_results = mlu.eval_step(model_handler, device, valid_generator,
+                                                mus, sigmas, args.normalize)
+
+        valid_results = mlu.eval_step(model_handler, device, train_generator,
+                                      mus, sigmas, args.normalize)
+
+        # Print epoch results
+        model_handler.task_handler.print_epoch_results(
+                train_results, valid_results)
+        print('New train results:')
+        model_handler.task_handler.print_epoch_results(
+                evaluated_train_results, valid_results)
+
+        # Anneal learning rate
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = \
+                param_group['lr']*config['learning_rate_annealing']
+
+
+        # Check model improvement and update best results
+        has_improved = model_handler.task_handler.update_best_results(
+                       valid_results)
+        if has_improved:
+            # Reset patience
+            patience = 0
+            # Save best model
+            torch.save({'epoch': epoch+1,
+                'model_state_dict': model_handler.model.state_dict(),
+                'best_results': model_handler.task_handler.best_results},
+                bestmodel_fullpath)
+            print('Saving best model')
+
+        else:
+            patience += 1
+
+        # Save last model
+        torch.save({'epoch': epoch+1,
+            'model_state_dict': model_handler.model.state_dict(),
+            'results': model_handler.task_handler.best_results,
+            'patience':patience},
+            lastmodel_fullpath)
+
+        print('Epoch execution time: {} seconds'.format(
+              time.time() - epoch_start_time))
+
+        # Check early stopping
+        if patience >= max_patience:
+            has_early_stoped = True
+            print('\nEarly stoping, exiting training loop', flush=True)
+            break
+
+    print('Executed training in {} seconds'.format(
+          time.time() - training_start_time))
+    print('---\n')
+
+    # ----------------------------------------
+    #                   TEST
+    # ----------------------------------------
+    test_start_time = time.time()
+    print('\n---\nStarting test')
+
+    # Load best model to do the test
+    checkpoint = torch.load(bestmodel_fullpath)
+    print('Loading best model from epoch {}'.format(checkpoint['epoch']))
+
+    model_handler.model.load_state_dict(checkpoint['model_state_dict'])
+
+    # Test step
+    model_handler.model.eval()
+    test_results = mlu.eval_step(model_handler, device, test_generator,
+                                 mus, sigmas, args.normalize)
+
+    model_handler.task_handler.print_test_results(test_results)
+
+    # Save test results
+    test_filename = 'test_results_epoch'+str(checkpoint['epoch'])
+    test_fullpath = os.path.join(results_fullpath, test_filename)
+    model_handler.task_handler.save_predictions(
+            test_results, test_fullpath)
+
 
     # Training
-    train(config, args.comet_ml, args.comet_ml_project_name, args.optimization)
+    #train(config, args.comet_ml, args.comet_ml_project_name, args.optimization)
 
 
 def train(config, comet_log, comet_project_name, optimization_exp):
-    # Monitoring time to execute the whole training function
-    whole_exp_start_time = time.time()
 
     # ----------------------------------------
     #       EXPERIMENT IDENTIFIER
     # ----------------------------------------
+    """
     # Experiment identifier for naming files
-    if config['specifics']['model'] == 'Dietnet':
-        exp_identifier = 'auxu_' \
-                + str(config['params']['nb_hidden_u_aux'])[1:-1].replace(', ','_') \
-                + '_mainu_' \
-                    + str(config['params']['nb_hidden_u_aux'][-1]) + '_' \
-                    + str(config['params']['nb_hidden_u_main'])[1:-1].replace(', ','_') \
-                + '_lr_' + str(config['params']['learning_rate']) \
-                + '_lra_' + str(config['params']['learning_rate_annealing']) \
-                + '_epochs_' + str(config['params']['epochs']) \
-                + '_patience_' + str(config['params']['patience']) \
-                + '_inpdrop_' + str(config['params']['input_dropout']) \
-                + '_seed_' + str(config['params']['seed'])
     elif config['specifics']['model'] == 'Mlp':
         exp_identifier = 'mlp_' \
                 + str(config['params']['n_hidden_u'])[1:-1].replace(', ','_') \
@@ -144,7 +352,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
                 + '_patience_' + str(config['params']['patience']) \
                 + '_inpdrop_' + str(config['params']['input_dropout']) \
                 + '_seed_' + str(config['params']['seed'])
-
+    """
 
     # ----------------------------------------
     #               COMET PROJECT
@@ -170,113 +378,6 @@ def train(config, comet_log, comet_project_name, optimization_exp):
         # Log specifics
         experiment.log_others(config['specifics'])
 
-    # ----------------------------------------
-    #               SET DEVICE
-    # ----------------------------------------
-    print('\n --- Setting device ---')
-    print('Cuda available:', torch.cuda.is_available())
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print('device:', device)
-
-    # ----------------------------------------
-    #               FIX SEED
-    # ----------------------------------------
-    seed = config['params']['seed']
-    #torch.backends.cudnn.deterministic = True
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    if device.type=='cuda':
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-
-    # ----------------------------------------
-    #        LOAD INPUT FEATURES MEANS
-    # ----------------------------------------
-    print('\n --- Loading input features mean ---')
-
-    # Mean and sd per feature computed on training set
-    input_features_means = np.load(os.path.join(
-        config['specifics']['exp_path'],
-        config['specifics']['input_features_means'])
-        )
-
-    mus = input_features_means['means_by_fold'][config['params']['fold']]
-
-    # Send mus to device
-    mus = torch.from_numpy(mus).float().to(device)
-    if 'sd_by_fold' in input_features_means.files:
-        sigmas = input_features_means['sd_by_fold'][config['params']['fold']]
-        ##sigmas = preprocess_params['sd_by_fold'][config['params']['fold']]
-        sigmas = torch.from_numpy(sigmas).float().to(device)
-    else:
-        sigmas = None
-
-    # ----------------------------------------
-    #           LOAD FOLD INDEXES
-    # ----------------------------------------
-    print('\n --- Loading fold indexes of train, valid and test sets ---')
-    all_folds_idx = np.load(os.path.join(
-        config['specifics']['exp_path'],
-        config['specifics']['partition']),
-        allow_pickle=True)
-
-    fold_idx = all_folds_idx['folds_indexes'][config['params']['fold']]
-
-    # ----------------------------------------
-    #       MAKE TRAIN, VALID, TEST SETS
-    # ----------------------------------------
-    print('\n --- Making train, valid, test sets classes ---')
-
-    # Dataset hdf5 file
-    dataset_file = os.path.join(
-            config['specifics']['exp_path'],
-            config['specifics']['dataset'])
-
-    du.FoldDataset.dataset_file = dataset_file
-    du.FoldDataset.f = h5py.File(du.FoldDataset.dataset_file, 'r')
-
-    # Label conversion depending on task
-    if config['specifics']['task'] == 'classification':
-        du.FoldDataset.label_type = np.int64
-    elif config['specifics']['task'] == 'regression':
-        du.FoldDataset.label_type = np.float32
-
-    train_set = du.FoldDataset(fold_idx[0])
-    print('training set:', len(train_set))
-
-    print('TRAIN SET SAMPLE 1')
-    print(train_set.__getitem__(1))
-
-    valid_set = du.FoldDataset(fold_idx[1])
-    print('valid set:', len(valid_set))
-    test_set = du.FoldDataset(fold_idx[2])
-    print('test set:', len(test_set))
-    
-    #  Model now encapsulated by modelHandler object
-    if config['specifics']['model'] == 'Dietnet':
-        mod_handler = dietNetworkHandler(config, device)
-    elif config['specifics']['model'] == 'Mlp':
-        mod_handler = MlpHandler(config, device)
-    else:
-        raise Exception('{} Not implemented yet!'.format(config['specifics']['model']))
-
-    # ----------------------------------------
-    #               OPTIMIZATION
-    # ----------------------------------------
-    # Loss
-    if config['specifics']['task'] == 'classification':
-        criterion = nn.CrossEntropyLoss()
-    elif config['specifics']['task'] == 'regression':
-        criterion = nn.MSELoss()
-
-    print('For loss we use:', criterion)
-
-    # Optimizer
-    lr = config['params']['learning_rate']
-    optimizer = torch.optim.Adam(mod_handler.get_trainable_parameters(), lr=lr)
-
-    # Max nb of epochs
-    n_epochs = config['params']['epochs']
 
     # ----------------------------------------
     #             BATCH GENERATORS
@@ -559,67 +660,65 @@ def parse_args():
             '--exp-path',
             type=str,
             required=True,
-            help='Path to directory of dataset, folds indexes and embedding.'
+            help='Path to directory where results will be saved.'
             )
 
     parser.add_argument(
             '--exp-name',
             type=str,
             required=True,
-            help=('Name of directory where to save the results. '
-                  'This direcotry must be in the directory specified with '
-                  'exp-path. ')
+            help=('Name of directory where to write results in exp-path '
+                  'The results will be written to exp-path/exp-name')
             )
 
     # Files
     parser.add_argument(
             '--config',
             type=str,
-            default='config.yaml',
-            help='Yaml file of hyperparameter. Default: %(default)s'
+            required=True,
+            help='Yaml file of hyperparameters. Provide full path'
             )
-    
+
     parser.add_argument(
             '--model',
             type=str,
             choices=['Dietnet', 'Mlp'],
             default='Dietnet',
-            help='Model architecture (default: Dietnet)'
+            help='Model architecture. Default: %(default)s'
             )
 
     parser.add_argument(
             '--dataset',
             type=str,
-            default='dataset.hdf5',
-            help=('Filename of dataset returned by create_dataset.py '
-                  'The file must be in direcotry specified with exp-path '
-                  'Default: %(default)s')
+            required=True,
+            help=('Hdf5 dataset created with create_dataset.py '
+                  'Provide full path')
             )
 
     parser.add_argument(
             '--partition',
             type=str,
-            default='partitioned_idx.npz',
-            help=('Filename of folds indexes returned by create_dataset.py '
-                  'The file must be in directory specified with exp-path. '
-                  'Default: %(default)s')
+            required=True,
+            help=('Npz dataset partition returned by partition_data.py '
+                  'Provide full path')
             )
 
     parser.add_argument(
             '--embedding',
             type=str,
-            default='embedding.npz',
-            help=('Filename of embedding returned by generate_embedding.py '
-                  'The file must be in directory specified with exp-path. '
-                  'Default: %(default)s')
+            required=True,
+            help=('Embedding per fold in npz format (ex: class genotype '
+                  'frequencies returned by generate_embedding.py) '
+                  'Provide full path')
             )
 
     parser.add_argument(
-            '--input-features-means',
+            '--input-features-stats',
             type=str,
-            default='input_features_means.npz',
-            help=('Filename of computed input features means. The means are '
-                  'used to replace missing genotypes. Default: %(default)s')
+            required=True,
+            help=('Input features mean and sd in npz format returned by '
+                  'compute_input_features_statistics.py '
+                  'Provide full path')
             )
 
     # Input features normalization
@@ -629,20 +728,19 @@ def parse_args():
             help='Use this flag to normalize input features.'
             )
 
-    """
-    parser.add_argument(
-            '--preprocess-params',
-            type=str,
-            default='preprocessing_params.npz',
-            help='Normalization parameters obtained with get_preprocessing_params.py'
-            )
-    """
     # Task
     parser.add_argument(
             '--task',
             choices = ['classification', 'regression'],
             required=True,
             help='Type of prediction : classification or regression'
+            )
+
+    # Resume training
+    parser.add_argument(
+            '--resume-training',
+            action='store_true',
+            help='Use this flag to resume training'
             )
 
     # Fold

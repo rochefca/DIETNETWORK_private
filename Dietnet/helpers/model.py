@@ -1,26 +1,30 @@
 import sys
 import numpy as np
+import h5py
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from helpers.task_handlers import ClassificationHandler, RegressionHandler
 
-class Feat_emb_net(nn.Module):
-    def __init__(self, n_feats, n_hidden_u, param_init, uniform_init_limit):
-        super(Feat_emb_net, self).__init__()
 
-        # Hidden layers
+class AuxiliaryNetwork(nn.Module):
+    def __init__(self, n_feats_emb, config, param_init):
+        super(AuxiliaryNetwork, self).__init__()
+
+        # Hidden layers : self.hidden layers
+        nb_hidden_u = config['nb_hidden_u_aux']
         self.hidden_layers = []
-        for i in range(len(n_hidden_u)):
+        for i in range(len(nb_hidden_u)):
             # First layer
             if i == 0:
                 self.hidden_layers.append(
-                        nn.Linear(n_feats, n_hidden_u[i], bias=False)
+                        nn.Linear(n_feats_emb, nb_hidden_u[i], bias=False)
                         )
             else:
                 self.hidden_layers.append(
-                        nn.Linear(n_hidden_u[i-1], n_hidden_u[i], bias=False)
+                        nn.Linear(nb_hidden_u[i-1], nb_hidden_u[i], bias=False)
                         )
         self.hidden_layers = nn.ModuleList(self.hidden_layers)
 
@@ -38,99 +42,29 @@ class Feat_emb_net(nn.Module):
                     torch.from_numpy(params['w2_aux']))
 
         else:
+            uniform_init_limit = config['uniform_init_limit']
             for layer in self.hidden_layers:
                 nn.init.uniform_(layer.weight, a=-uniform_init_limit, b=uniform_init_limit)
 
 
     def forward(self, x):
-        if self.training:
-            with torch.no_grad():
-                d = {'x':x, 'x_mean':x.mean(axis=0)}
-
         for i,layer in enumerate(self.hidden_layers):
             ze = layer(x)
             ae = torch.tanh(ze)
             x = ae
 
-            """
-            if self.training:
-                with torch.no_grad():
-                    d['ze_layer{}'.format(i)] = ze
-                    d['ze_layer{}_mean'.format(i)] = ze.mean(axis=0)
-
-                    d['ae_layer{}'.format(i)] = ae
-                    d['ae_layer{}_mean'.format(i)] = ae.mean(axis=0)
-                    filename = 'COMPARE/compare_regressImplem_auxNet.pt'
-                    torch.save(d, filename)
-            """
         return ae
 
 
-class Discrim_net(nn.Module):
-    def __init__(self, fatLayer_weights, n_feats,
-                 n_hidden1_u, n_hidden2_u, n_targets,
-                 input_dropout=0., eps=1e-05, incl_softmax=False):
-        super(Discrim_net, self).__init__()
-
-        # Dropout on input layer
-        self.input_dropout = nn.Dropout(p=input_dropout)
-
-        # 1st hidden layer
-        self.hidden_1 = nn.Linear(n_feats, n_hidden1_u)
-        self.hidden_1.weight = torch.nn.Parameter(fatLayer_weights)
-        nn.init.zeros_(self.hidden_1.bias)
-        self.bn1 = nn.BatchNorm1d(num_features=n_hidden1_u, eps=eps)
-
-        # 2nd hidden layer
-        self.hidden_2 = nn.Linear(n_hidden1_u, n_hidden2_u)
-        nn.init.xavier_uniform_(self.hidden_2.weight)
-        nn.init.zeros_(self.hidden_2.bias)
-        self.bn2 = nn.BatchNorm1d(num_features=n_hidden2_u, eps=eps)
-
-        # Output layer
-        self.out = nn.Linear(n_hidden2_u, n_targets)
-        nn.init.xavier_uniform_(self.out.weight)
-        nn.init.zeros_(self.out.bias)
-
-        # Dropout
-        self.dropout = nn.Dropout()
-
-        self.incl_softmax = incl_softmax
-
-
-    def forward(self, x):
-        # input size: batch_size x n_feats
-        x = self.input_dropout(x)
-
-        z1 = self.hidden_1(x)
-        a1 = torch.relu(z1)
-        a1 = self.bn1(a1)
-        a1 = self.dropout(a1)
-
-        z2 = self.hidden_2(a1)
-        a2 = torch.relu(z2)
-        a2 = self.bn2(a2)
-        a2 = self.dropout(a2)
-
-        out = self.out(a2)
-
-        # Softmax will be computed in the loss
-        if self.incl_softmax:
-            out = torch.softmax(out, 1)
-
-        return out
-
-
-class Discrim_net2(nn.Module):
+class MainNetwork(nn.Module):
     """
     Discrim_net modified to take fatLayer_weights as a forward arg.
     Does not have weights for first layer;
     Uses F.linear with passed weights instead
     """
-    def __init__(self, n_feats,
-                 n_hidden_u, n_targets,
-                 param_init, input_dropout=0., eps=1e-5, incl_bias=True, incl_softmax=False):
-        super(Discrim_net2, self).__init__()
+    def __init__(self, n_feats, n_targets, config, param_init,
+                 input_dropout=0., eps=1e-5, incl_bias=True, incl_softmax=False):
+        super(MainNetwork, self).__init__()
 
         self.hidden_layers = []
         self.bn_fatLayer = None
@@ -140,25 +74,28 @@ class Discrim_net2(nn.Module):
 
         # Dropout on input layer
         self.input_dropout = nn.Dropout(p=input_dropout)
+
         # Dropout
         self.dropout = nn.Dropout()
 
-        # ---Layers and batchnorm (bn)  definition ---
-        for i in range(len(n_hidden_u)):
+        # ---Layers and batchnorm: self.hidden_layers and self.bn---
+        nb_hidden_u = config['nb_hidden_u_aux'][-1:] + config['nb_hidden_u_main']
+        for i in range(len(nb_hidden_u)):
             # First layer: linear function handle in forward function below
             if i == 0:
-                self.bn_fatLayer = nn.BatchNorm1d(num_features=n_hidden_u[i], eps=eps)
+                self.bn_fatLayer = nn.BatchNorm1d(num_features=nb_hidden_u[i], eps=eps)
             # Hidden layers
             else:
                 self.hidden_layers.append(
-                        nn.Linear(n_hidden_u[i-1], n_hidden_u[i]))
+                        nn.Linear(nb_hidden_u[i-1], nb_hidden_u[i]))
                 self.bn.append(
-                        nn.BatchNorm1d(num_features=n_hidden_u[i], eps=eps))
+                        nn.BatchNorm1d(num_features=nb_hidden_u[i], eps=eps))
             # Output layer
-            self.out = nn.Linear(n_hidden_u[-1], n_targets)
+            self.out = nn.Linear(nb_hidden_u[-1], n_targets)
 
         self.hidden_layers = nn.ModuleList(self.hidden_layers)
         self.bn = nn.ModuleList(self.bn)
+
         # ---Parameters initialization---
         # Theno init
         if param_init is not None and len(self.hidden_layers)==2:
@@ -177,12 +114,13 @@ class Discrim_net2(nn.Module):
         else:
             for layer in self.hidden_layers:
                 nn.init.xavier_uniform_(layer.weight)
+
             nn.init.xavier_uniform_(self.out.weight)
 
         # ---Bias initialization---
         # Fat layer
         if incl_bias:
-            self.fat_bias = nn.Parameter(data=torch.rand(n_hidden_u[0]), requires_grad=True)
+            self.fat_bias = nn.Parameter(data=torch.rand(nb_hidden_u[0]), requires_grad=True)
             nn.init.zeros_(self.fat_bias)
         else:
             self.fat_bias = None
@@ -199,91 +137,15 @@ class Discrim_net2(nn.Module):
         # input size: batch_size x n_feats
         # weight = comes from feat embedding net
         # now ^^^ is passed with forward
-        """
-        print('MODEL IN TRAINING MODE:', self.training)
-
-        print('FAT LAYER WEIGHTS:')
-        print(fatLayer_weights)
-        print(fatLayer_weights.dtype)
-        print(fatLayer_weights.mean(axis=0))
-        """
 
         x = self.input_dropout(x)
 
-        """
-        if self.training:
-            with torch.no_grad():
-                d = {'x':x, 'x_mean':x.mean(axis=0), 'fat_weights':fatLayer_weights, 'fat_weights_mean':fatLayer_weights.mean(axis=0)}
-        """
-        """
-        print('X')
-        print(x)
-        print(x.dtype)
-        print('MEAN')
-        print(x.mean(axis=0))
-        """
         # Fat layer
         z1 = F.linear(x, fatLayer_weights, bias=self.fat_bias)
-
-        """
-        if self.training:
-            with torch.no_grad():
-                d['z1'] = z1
-                d['z1_mean'] = z1.mean(axis=0)
-        """
-        """
-        print('FAT LAYER OUTPUT')
-        print(z1)
-        print(z1.dtype)
-        print(z1.mean(axis=0))
-        """
         a1 = torch.relu(z1)
-        """
-        if self.training:
-            with torch.no_grad():
-                d['a1'] = a1
-                d['a1_mean'] = a1.mean(axis=0)
-        """
-        """
-        print('RELU OUTPUT')
-        print(a1)
-        print(a1.dtype)
-        print('MEAN')
-        print(a1.mean(axis=0))
-        """
         a1 = self.bn_fatLayer(a1)
-        """
-        if self.training:
-            with torch.no_grad():
-                d['a1_bnormed'] = a1
-                d['a1_bnormed_mean'] = a1.mean(axis=0)
-        """
-        """
-        print('BN')
-        print(self.bn_fatLayer)
-        print('weights:',self.bn_fatLayer.weight)
-        print('bias:', self.bn_fatLayer.bias)
-        print('running mean:', self.bn_fatLayer.running_mean)
-        print('running var:', self.bn_fatLayer.running_var)
-
-        print('BN OUTPUT')
-        print(a1)
-        """
-
         a1 = self.dropout(a1)
-        """
-        if self.training:
-            with torch.no_grad():
-                d['a1_drop'] = a1
-                d['a1_drop_mean'] = a1.mean(axis=0)
 
-                filename = 'COMPARE/compare_regress_mainNet.pt'
-                torch.save(d, filename)
-        """
-        """
-        print('DROPOUT:')
-        print(a1)
-        """
         # Hidden layers
         next_input = a1
         for layer, bn in zip(self.hidden_layers, self.bn):
@@ -306,29 +168,77 @@ class Discrim_net2(nn.Module):
         return out
 
 
-class CombinedModel(nn.Module):
-    def __init__(self, n_feats, n_hidden_u_aux, n_hidden_u_main,
-                 n_targets, param_init, aux_uniform_init_limit,
+class DietNetwork(nn.Module):
+    def __init__(self, fold, emb_filename, device,
+                 dataset_filename, config, param_init,
                  input_dropout=0., eps=1e-5, incl_bias=True, incl_softmax=False):
-        super(CombinedModel, self).__init__()
+        super(DietNetwork, self).__init__()
 
-        # Initialize feat. embedding and discriminative networks
-        self.feat_emb = Feat_emb_net(n_feats, n_hidden_u_aux, param_init, aux_uniform_init_limit)
-        self.disc_net = Discrim_net2(n_feats, n_hidden_u_main, n_targets,
-                                     param_init, input_dropout, eps,
-                                     incl_bias, incl_softmax)
         self.fatLayer_weights = None
 
+        # ----------------------------------------
+        #               EMBEDDING
+        # ----------------------------------------
+        # Load embedding
+        emb = np.load(emb_filename)['emb']
+        if len(emb.shape) == 3:
+            # One embedding per fold
+            emb = np.load(emb_filename)['emb'][fold]
+        elif len(emb.shape) == 2:
+            # Same embedding for every fold
+            emb = np.load(emb_filename)['emb']
 
-    def forward(self, emb, x_batch, save_layers=False):
+        # Send to device
+        emb = torch.from_numpy(emb)
+        emb = emb.to(device).float()
+
+        # Normalize embedding
+        emb_norm = (emb ** 2).sum(0) ** 0.5
+        emb = emb/emb_norm
+
+        # Send to device
+        self.embedding = emb
+        print('Embedding size: {}'.format(emb.size()))
+
+        # ----------------------------------------
+        #           AUXILIARY NETWORK
+        # ----------------------------------------
+        # Auxiliary network input size
+        if len(emb.size()) == 1:
+            n_feats_emb = 1 # 1 value per SNP
+            emb = torch.unsqueeze(emb, dim=1)
+        else:
+            n_feats_emb = emb.size()[1]
+
+        # Instantiate auxiliary netwrok
+        self.aux_net = AuxiliaryNetwork(n_feats_emb, config, param_init)
+
+        # ----------------------------------------
+        #               MAIN NETWORK
+        # ----------------------------------------
+        # Main network input size
+        n_feats = emb.size()[0]
+
+        # Main Network output size (nb targets)
+        with h5py.File(dataset_filename, 'r') as f:
+            if 'regression_labels' in f.keys():
+                n_targets = 1
+            else:
+                n_targets = len(f['class_label_names'])
+
+        # Instantiate main network
+        self.main_net = MainNetwork(n_feats, n_targets, config, param_init)
+
+
+    def forward(self, x_batch, save_layers=False):
         # Forward pass in auxilliary net
-        feat_emb_model_out = self.feat_emb(emb)
+        aux_net_out = self.aux_net(self.embedding)
 
         # Forward pass in discrim net
-        self.fatLayer_weights = torch.transpose(feat_emb_model_out,1,0)
-        discrim_model_out = self.disc_net(x_batch, self.fatLayer_weights, save_layers)
+        self.fatLayer_weights = torch.transpose(aux_net_out,1,0)
+        main_net_out = self.main_net(x_batch, self.fatLayer_weights, save_layers)
 
-        return discrim_model_out
+        return main_net_out
 
 
 class Mlp(nn.Module):
@@ -395,54 +305,3 @@ class Mlp(nn.Module):
         out = self.out(next_input)
 
         return out
-
-
-if __name__ == '__main__':
-    # Let's do a little test just to see if the run fails
-    # Dummy data
-    x = torch.ones((30,3000),requires_grad=True)
-    y = torch.LongTensor(30).random_(0, 2)
-    x_emb = torch.ones((3000,3*3), requires_grad=True)
-
-    # Intantiate models
-    emb_model = Feat_emb_net(n_feats=x_emb.size()[1], n_hidden_u=100)
-    emb_model_out = emb_model(x_emb)
-    fatLayer_weights = torch.transpose(emb_model_out,1,0)
-    discrim_model = Discrim_net(fatLayer_weights=fatLayer_weights,
-                                n_feats=x.size()[1],
-                                n_hidden1_u=100, n_hidden2_u=100,
-                                n_targets=y.size()[0])
-    # Loss
-    criterion = nn.CrossEntropyLoss()
-    # Optimizer
-    params = list(discrim_model.parameters()) + list(emb_model.parameters())
-    optimizer = torch.optim.SGD(params, lr=0.1)
-
-    # Training loop
-    for epoch in range(10):
-        print('epoch:', epoch)
-        optimizer.zero_grad()
-
-        # Forward pass in feat emb net
-        emb_out = emb_model(x_emb)
-
-        # Set fat layer weights in discrim net
-        fatLayer_weights = torch.transpose(emb_out,1,0)
-        discrim_model.hidden_1.weight.data = fatLayer_weights
-
-        # Forward pass in discrim net
-        discrim_out = discrim_model(x)
-
-        # Compute loss
-        loss = criterion(discrim_out, y)
-        print('Loss:', loss)
-
-        # Compute gradients in discrim net
-        loss.backward()
-        # Copy weights of W1 in discrim net to emb_out.T
-        fatLayer_weights.grad = discrim_model.hidden_1.weight.grad
-        # Compute gradients in feat. emb. net
-        torch.autograd.backward(fatLayer_weights, fatLayer_weights.grad)
-
-        # Optim
-        optimizer.step()

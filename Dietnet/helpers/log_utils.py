@@ -8,29 +8,17 @@ import numpy as np
 import torch
 
 
-def create_out_dir(exp_path, exp_name, fold):
+def create_dir(dir_fullpath):
     """
-    This creates a directory exp_path/exp_name/exp_name_fold
-    to save the results
+    This check if a direcotry already exists and
+    creates the directory if it does not
     """
-    dir_name = exp_name + '_fold' + str(fold)
-    dir_path = os.path.join(exp_path, exp_name, dir_name)
-
-    # Create directory
-    if not os.path.isdir(dir_path):
+    if not os.path.isdir(dir_fullpath):
         try:
-            Path(dir_path).mkdir(parents=True, exist_ok=True)
+            Path(dir_fullpath).mkdir(parents=True, exist_ok=True)
         except OSError:
-            print('Creation of directory %s failed' % dir_path)
+            print('Creation of directory %s failed' % dir_fullpath)
             sys.exit(1)
-        else:
-            print('Created', dir_path, 'to save experiment info and results')
-
-    # Directory already exist
-    else:
-        print('Experiment info and results will be save in %s' % dir_path)
-
-    return dir_path
 
 
 def save_exp_params(out_dir, filename, config):
