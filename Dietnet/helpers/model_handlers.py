@@ -16,8 +16,9 @@ class modelHandler:
     This class contains methods for model initialization and forward/reverse pass
     """
 
-    def __init__(self, model):
+    def __init__(self, model, task_handler):
         self.model = model
+        self.task_handler = task_handler
 
     def forward(self, x):
         return self.model(x)
@@ -40,23 +41,24 @@ class modelHandler:
     def log_weight_initialization(self):
         raise NotImplementedError
 
-    def get_exp_identifier(self, config, n_epochs, task, fold):
+    def get_exp_identifier(self, config, task, fold):
         raise NotImplementedError
 
 
 class DietNetworkHandler(modelHandler):
 
-    def __init__(self, fold, emb_filename, dataset_filename, config, param_init):
+    def __init__(self, task_handler, fold, emb_filename, device,
+                 dataset_filename, config, param_init):
         # Make the Dietnet model
-        dn_model = model.DietNetwork(fold, emb_filename, dataset_filename, config, param_init)
+        dn_model = model.DietNetwork(fold, emb_filename, device,
+                                     dataset_filename, config, param_init)
 
-        super(DietNetworkHandler, self).__init__(dn_model)
+        super(DietNetworkHandler, self).__init__(dn_model, task_handler)
 
-        #self.model = comb_model
-        #self.emb = emb
 
+    """
     def forwardpass(self, x):
-        return self.model(self.emb, x)
+        return self.model(self.model.embedding x)
 
     def save(self, out_dir, filename):
         lu.save_model_params(out_dir, self.model, filename)
@@ -73,12 +75,10 @@ class DietNetworkHandler(modelHandler):
             experiment.log_histogram_3d(layer.weight.cpu().detach().numpy(),
                                         name=layer_name,
                                         step=0)
-            """
-            layer_name = 'auxNet_bias_layer' + str(i)
-            experiment.log_histogram_3d(layer.bias.cpu().detach().numpy(),
-                                        name=layer_name,
-                                        step=0)
-            """
+            #layer_name = 'auxNet_bias_layer' + str(i)
+            #experiment.log_histogram_3d(layer.bias.cpu().detach().numpy(),
+            #                            name=layer_name,
+            #                            step=0)
 
         # Layers in main net
         experiment.log_histogram_3d(
@@ -100,10 +100,10 @@ class DietNetworkHandler(modelHandler):
 
     def eval_mode(self):
         self.model.eval()
+    """
 
-    def get_exp_identifier(self, config, n_epochs, task, fold):
-        exp_identifier =  'Fold' + str(fold) \
-                + '_' + task \
+    def get_exp_identifier(self, config, fold):
+        exp_identifier =  self.task_handler.name \
                 + '_auxu_' \
                     + str(config['nb_hidden_u_aux'])[1:-1].replace(', ','_') \
                 + '_mainu_' \
@@ -113,9 +113,10 @@ class DietNetworkHandler(modelHandler):
                 + '_lr_' + str(config['learning_rate']) \
                 + '_lra_' + str(config['learning_rate_annealing']) \
                 + '_uniform_init_limit_' + str(config['uniform_init_limit']) \
-                + '_epochs_' + str(n_epochs) \
+                + '_epochs_' + str(config['epochs']) \
                 + '_patience_' + str(config['patience']) \
-                + '_seed_' + str(config['seed'])
+                + '_seed_' + str(config['seed']) \
+                + '_fold' + str(fold)
 
         return exp_identifier
 

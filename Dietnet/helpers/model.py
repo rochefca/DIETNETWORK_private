@@ -6,6 +6,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from helpers.task_handlers import ClassificationHandler, RegressionHandler
+
 
 class AuxiliaryNetwork(nn.Module):
     def __init__(self, n_feats_emb, config, param_init):
@@ -167,7 +169,8 @@ class MainNetwork(nn.Module):
 
 
 class DietNetwork(nn.Module):
-    def __init__(self, fold, emb_filename, dataset_filename, config, param_init,
+    def __init__(self, fold, emb_filename, device,
+                 dataset_filename, config, param_init,
                  input_dropout=0., eps=1e-5, incl_bias=True, incl_softmax=False):
         super(DietNetwork, self).__init__()
 
@@ -177,13 +180,23 @@ class DietNetwork(nn.Module):
         #               EMBEDDING
         # ----------------------------------------
         # Load embedding
-        emb = np.load(emb_filename)['emb'][fold]
+        emb = np.load(emb_filename)['emb']
+        if len(emb.shape) == 3:
+            # One embedding per fold
+            emb = np.load(emb_filename)['emb'][fold]
+        elif len(emb.shape) == 2:
+            # Same embedding for every fold
+            emb = np.load(emb_filename)['emb']
+
+        # Send to device
         emb = torch.from_numpy(emb)
+        emb = emb.to(device).float()
 
         # Normalize embedding
         emb_norm = (emb ** 2).sum(0) ** 0.5
         emb = emb/emb_norm
 
+        # Send to device
         self.embedding = emb
         print('Embedding size: {}'.format(emb.size()))
 
@@ -217,9 +230,9 @@ class DietNetwork(nn.Module):
         self.main_net = MainNetwork(n_feats, n_targets, config, param_init)
 
 
-    def forward(self, emb, x_batch, save_layers=False):
+    def forward(self, x_batch, save_layers=False):
         # Forward pass in auxilliary net
-        aux_net_out = self.aux_net(emb)
+        aux_net_out = self.aux_net(self.embedding)
 
         # Forward pass in discrim net
         self.fatLayer_weights = torch.transpose(aux_net_out,1,0)

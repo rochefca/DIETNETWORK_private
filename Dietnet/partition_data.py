@@ -36,39 +36,83 @@ def main():
     # Shuffle data
     np.random.seed(args.seed)
     np.random.shuffle(indices)
+    indices = list(indices)
 
-    # Get indices of test set samples for each fold
+    # Step and split positions for test sets in each fold
     step = math.floor(len(indices)/nb_folds)
     split_pos = [i for i in range(0, len(indices), step)]
 
     test_indices_byfold = []
-    start = split_pos[0] # this is start=0
-    for i in range(nb_folds-1):
-        test_indices_byfold.append(indices[start:(start+step)])
-        start = split_pos[i+1]
-
-    test_indices_byfold.append(indices[start:]) # append last fold
-
-    print('Partitioned data into {} folds of length {}'.format(
-          nb_folds, [len(i) for i in test_indices_byfold]))
-
-    # Get indices of train+valid sets samples for each fold
-    train_indices_byfold = []
     valid_indices_byfold = []
-    for i in range(nb_folds):
-        other_folds = [f for f in range(nb_folds) if f!=i]
-        # Concat test indices of other folds: this is train+valid indices
-        train_valid_indices = np.concatenate(
-                [test_indices_byfold[f] for f in other_folds])
-        # Split into train and valid sets
-        split_pos = int(len(train_valid_indices)*train_valid_ratio)
-        train_indices = train_valid_indices[0:split_pos]
-        valid_indices = train_valid_indices[split_pos:]
-        # Append train and valid indices
-        train_indices_byfold.append(train_indices)
+    train_indices_byfold = []
+    test_start = split_pos[0] # this is start=0
+
+    # Get indices by set
+    for i in range(nb_folds-1):
+        # Test set
+        test_indices = indices[test_start:(test_start+step)]
+        test_indices_byfold.append(test_indices)
+
+        # Nb of samples in train and valid sets
+        nb_train_and_valid = len(indices) - len(test_indices)
+        nb_train = math.floor(nb_train_and_valid*train_valid_ratio)
+        nb_valid = nb_train_and_valid - nb_train
+
+        # Valid set
+        valid_start = (test_start + len(test_indices)) % len(indices)
+        valid_end = (valid_start + nb_valid) % len(indices)
+
+        if (valid_end > valid_start):
+            valid_indices = indices[valid_start:valid_end]
+        else:
+            valid_indices = indices[valid_start:] + indices[:valid_end]
+
         valid_indices_byfold.append(valid_indices)
-    print('Each fold was split into train/valid sets with ratio {} '.format(
-          train_valid_ratio))
+
+        # Train set
+        train_start = valid_end
+        train_end = (valid_end + nb_train) % len(indices)
+
+        if (train_end > train_start):
+            train_indices = indices[train_start:train_end]
+        else:
+            train_indices = indices[train_start:] + indices[:train_end]
+
+        train_indices_byfold.append(train_indices)
+
+        # Update test start for next loop iteration
+        test_start = split_pos[i+1]
+
+    # Get indices : Last fold
+    test_indices = indices[test_start:]
+    test_indices_byfold.append(test_indices) # append last fold
+
+    # Nb of samples in train and valid sets
+    nb_train_and_valid = len(indices) - len(test_indices)
+    nb_train = math.floor(nb_train_and_valid*train_valid_ratio)
+    nb_valid = nb_train_and_valid - nb_train
+
+    # Valid set
+    valid_start = 0
+    valid_end = (valid_start + nb_valid) % len(indices)
+
+    if (valid_end > valid_start):
+        valid_indices = indices[valid_start:valid_end]
+    else:
+        valid_indices = indices[valid_start:] + indices[:valid_end]
+
+    valid_indices_byfold.append(valid_indices)
+
+    # Train set
+    train_start = valid_end
+    train_end = (valid_end + nb_train) % len(indices)
+
+    if (train_end > train_start):
+        train_indices = indices[train_start:train_end]
+    else:
+        train_indices = indices[train_start:] + indices[:train_end]
+
+    train_indices_byfold.append(train_indices)
 
     # Grouping train, valid and test indices by fold
     indices_byfold = []
@@ -84,6 +128,17 @@ def main():
         test_samples = samples[indices_byfold[fold][2]]
 
         samples_byfold.append([train_samples, valid_samples, test_samples])
+
+    print('Created {} folds with the following number of samples'.format(
+          nb_folds))
+    for i,fold_indices in enumerate(indices_byfold):
+        print('FOLD:',i)
+        print('Train: {} samples'.format(len(fold_indices[0])))
+        print('Valid: {} samples'.format(len(fold_indices[1])))
+        print('Test: {} samples'.format(len(fold_indices[2])))
+        print('Fold number of samples:',
+              len(fold_indices[0])+len(fold_indices[1])+len(fold_indices[2]))
+        print('***')
 
     # Saving results
     if args.out is not None:

@@ -11,7 +11,7 @@ class FoldDataset(torch.utils.data.Dataset):
     # These variables are set in train.py
     dataset_file = None #path to h5py dataset file
     f = None # Dataset file handler (h5py.File in reading mode)
-    task = None # Classification or regression
+    task_handler = None # Classification or regression
 
     def __init__(self, set_indexes):
         self.set_indexes = set_indexes
@@ -28,11 +28,17 @@ class FoldDataset(torch.utils.data.Dataset):
         x = np.array(self.f['inputs'][file_index], dtype=np.int8)
 
         # Label
+        y = self.task_handler.get_label(self.f, file_index)
+        """
         if self.task == 'classification':
-            y = (self.f['class_labels'][file_index]).astype(np.int64)
+            #y = (self.f['class_labels'][file_index]).astype(np.int64)
+            y = np.array(self.f['class_labels'][file_index],
+                         dtype=np.int64)
         elif self.task == 'regression':
-            y = (self.f['regression_labels'][file_index]).astype(np.float32)
-
+            #y = (self.f['regression_labels'][file_index]).astype(np.float32)
+            y = np.array(self.f['regression_labels'][file_index],
+                         dtype=np.float32)
+        """
         # Sample id
         sample = (self.f['samples'][file_index]).astype(np.str_)
 
