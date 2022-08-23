@@ -31,7 +31,8 @@ def main():
 
     print('\n---')
     print('Computing embedding by fold using {} cpu(s)'.format(args.ncpus))
-    pool = mp.Pool(processes=args.ncpus) #this starts ncpus nb of processes
+    if args.ncpus > 1:
+        pool = mp.Pool(processes=args.ncpus) #this starts ncpus nb of processes
 
     # Results that will be returned by processes (embedding for a given fold)
     results = []
@@ -61,15 +62,22 @@ def main():
         # Compute embedding
         #emb = compute_fold_embedding(x, y)
 
-        results.append(pool.apply_async(
-            compute_fold_embedding, args=(x,y,fold)))
+        # One cpu
+        if args.ncpus == 1:
+            results.append(compute_fold_embedding(x, y, fold))
+        else:
+            results.append(pool.apply_async(
+                compute_fold_embedding, args=(x,y,fold)))
 
     # Close access to dataset file
     dataset_file.close()
 
     # Results values: [(fold0, embedding0), (fold1, embedding1) ...]
     print('Computed embedding of every fold, getting the results')
-    results_values = [p.get() for p in results]
+    if args.ncpus > 1:
+        results_values = [p.get() for p in results]
+    else:
+        results_values = results
 
     # Order results by fold
     print('Putting embeddings by fold order')

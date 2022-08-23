@@ -242,23 +242,34 @@ class DietNetwork(nn.Module):
 
 
 class Mlp(nn.Module):
-    def __init__(self, n_feats,
-                 n_hidden_u, n_targets,
-                 input_dropout=0., eps=1e-5):
+    def __init__(self, task_handler, dataset_filename, config, input_dropout=0., eps=1e-5):
         super(Mlp, self).__init__()
 
+        with h5py.File(dataset_filename, 'r') as f:
+            # Number of input features
+            n_feats = len(f['snp_names'])
+
+            # Number of targets (network output size)
+            if task_handler.name == 'regression':
+                n_targets = 1
+            elif task_handler.name == 'classification':
+                n_targets = len(f['class_label_names'])
+
+        # Layers to be defined
         self.hidden_layers = []
         self.bn = [] # batch normalization
         self.out = None # Output layer
 
         # Dropout on input layer
         self.input_dropout = nn.Dropout(p=input_dropout)
+
         # Dropout
         self.dropout = nn.Dropout()
 
-        # ---Layers and batchnorm (bn)  definition ---
+        # Layers definition
+        n_hidden_u = config['nb_hidden_u'] # nb of hidden units per layer
         for i in range(len(n_hidden_u)):
-            # First layer: linear function handle in forward function below
+            # First layer
             if i == 0:
                 self.hidden_layers.append(
                         nn.Linear(n_feats, n_hidden_u[i]))
