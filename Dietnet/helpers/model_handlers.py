@@ -56,52 +56,6 @@ class DietNetworkHandler(modelHandler):
         super(DietNetworkHandler, self).__init__(dn_model, task_handler)
 
 
-    """
-    def forwardpass(self, x):
-        return self.model(self.model.embedding x)
-
-    def save(self, out_dir, filename):
-        lu.save_model_params(out_dir, self.model, filename)
-
-    def load(self, torch_weight_dict):
-        self.model.load_state_dict(torch_weight_dict)
-
-    def log_weight_initialization(self, experiment):
-        # Log weights initialisation values to comet-ml
-
-        # Layers in aux net
-        for i,layer in enumerate(self.model.feat_emb.hidden_layers):
-            layer_name = 'auxNet_weights_layer' + str(i)
-            experiment.log_histogram_3d(layer.weight.cpu().detach().numpy(),
-                                        name=layer_name,
-                                        step=0)
-            #layer_name = 'auxNet_bias_layer' + str(i)
-            #experiment.log_histogram_3d(layer.bias.cpu().detach().numpy(),
-            #                            name=layer_name,
-            #                            step=0)
-
-        # Layers in main net
-        experiment.log_histogram_3d(
-                self.model.fatLayer_weights.cpu().detach().numpy(),
-                name='mainNet_fatLayer',
-                step=0)
-
-        for i,layer in enumerate(self.model.disc_net.hidden_layers):
-            layer_name = 'mainNet_layer' + str(i+1)
-            experiment.log_histogram_3d(layer.weight.cpu().detach().numpy(),
-                                        name=layer_name,
-                                        step=0)
-            layer_name = 'mainNet_bias_layer' + str(i)
-            experiment.log_histogram_3d(layer.bias.cpu().detach().numpy(),
-                                        name=layer_name,
-                                        step=0)
-    def train_mode(self):
-        self.model.train()
-
-    def eval_mode(self):
-        self.model.eval()
-    """
-
     def get_exp_identifier(self, config, fold):
         exp_identifier =  self.task_handler.name \
                 + '_auxu_' \
@@ -123,8 +77,30 @@ class DietNetworkHandler(modelHandler):
 
 class MlpHandler(modelHandler):
 
-    def __init__(self, config, device):
+    def __init__(self, task_handler, dataset_filename, config):
+        # Make the MLP model
+        mlp_model = model.Mlp(task_handler, dataset_filename, config)
 
+        super(MlpHandler, self).__init__(mlp_model, task_handler)
+
+
+    def get_exp_identifier(self, config, fold):
+        exp_identifier =  self.task_handler.name \
+                + '_mlp' \
+                + '_layers_' \
+                    + str(config['nb_hidden_u'])[1:-1].replace(', ','_') \
+                + '_inpdrop_' + str(config['input_dropout']) \
+                + '_lr_' + str(config['learning_rate']) \
+                + '_lra_' + str(config['learning_rate_annealing']) \
+                + '_epochs_' + str(config['epochs']) \
+                + '_patience_' + str(config['patience']) \
+                + '_seed_' + str(config['seed']) \
+                + '_fold' + str(fold)
+
+        return exp_identifier
+
+
+        """
         # ----------------------------------------
         #               MAKE MODEL
         # ----------------------------------------
@@ -177,34 +153,6 @@ class MlpHandler(modelHandler):
         #print(summary(comb_model.feat_emb, input_size=(294427,1,1,78)))
         #print(summary(comb_model.disc_net, input_size=[(138,1,1,294427),(100,294427)]))
 
+
         self.model = linear_model
-
-    def get_trainable_parameters(self):
         """
-        Get trainable parameters (for torch optimizer)
-        """
-        return self.model.parameters()
-
-    def forwardpass(self, x):
-        return self.model(x)
-
-    def save(self, out_dir, filename):
-        lu.save_model_params(out_dir, self.model, filename)
-
-    def load(self, torch_weight_dict):
-        self.model.load_state_dict(torch_weight_dict)
-
-    def log_weight_initialization(self, experiment):
-        # Log weights initialisation values to comet-ml
-
-        # Layers in net
-        for i,layer in enumerate(self.model):
-            layer_name = 'weights_layer' + str(i)
-            experiment.log_histogram_3d(layer.weight.cpu().detach().numpy(),
-                                        name=layer_name,
-                                        step=0)
-    def train_mode(self):
-        self.model.train()
-
-    def eval_mode(self):
-        self.model.eval()

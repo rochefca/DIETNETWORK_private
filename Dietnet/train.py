@@ -48,7 +48,7 @@ def main():
     print('---\n')
 
     # Task : clasification or regression
-    task = args.task
+    #task = args.task
 
     # Set device
     print('\n---\nSetting device')
@@ -69,6 +69,9 @@ def main():
     # ----------------------------------------
     #               TASK HANDLER
     # ----------------------------------------
+    # Task : clasification or regression
+    task = args.task
+
     if args.task == 'classification':
         criterion = nn.CrossEntropyLoss()
         task_handler = ClassificationHandler(args.dataset, criterion)
@@ -137,7 +140,7 @@ def main():
         model_handler = DietNetworkHandler(task_handler, fold,
                 args.embedding, device, args.dataset, config, param_init)
     elif args.model == 'Mlp':
-        print('Mlp model to do')
+        model_handler = MlpHandler(task_handler, args.dataset, config)
     else:
         raise Exception('{} is not a recognized model'.format(
             args.model))
@@ -263,6 +266,19 @@ def main():
         print('New train results:')
         model_handler.task_handler.print_epoch_results(
                 evaluated_train_results, valid_results)
+
+        # Write epoch results
+        train_filename = 'train_results_epoch'+str(epoch+1)
+        valid_filename = 'valid_results_epoch'+str(epoch+1)
+
+        train_fullpath = os.path.join(results_fullpath, train_filename)
+        valid_fullpath = os.path.join(results_fullpath, valid_filename)
+
+        model_handler.task_handler.save_predictions(
+                evaluated_train_results, train_fullpath)
+
+        model_handler.task_handler.save_predictions(
+                valid_results, valid_fullpath)
 
         # Anneal learning rate
         for param_group in optimizer.param_groups:

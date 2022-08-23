@@ -209,6 +209,7 @@ class RegressionHandler(TaskHandler):
             # Correlation
             # Pearson's r : SUM[(xi - xmean)(yi-ymean)] /
             #               SQRT[SUM[(xi-xmean)^2]*SUM[(yi-ymean)^2]]
+            """
             with torch.no_grad():
                 vx =  model_out - torch.mean(model_out)
                 vy = y_batch - torch.mean(y_batch)
@@ -221,6 +222,7 @@ class RegressionHandler(TaskHandler):
 
             self.batches_results['correlations'] = np.append(
                     self.batches_results['correlations'], sum_r.item())
+            """
 
 
     def print_baseline_results(self, baseline_results):
@@ -231,10 +233,9 @@ class RegressionHandler(TaskHandler):
         loss = baseline_results['losses'].sum()/nb_samples
 
         # Baseline correlation between labels and network outputs
-        corr = baseline_results['correlations'].sum()/nb_samples
+        #corr = baseline_results['correlations'].sum()/nb_samples
 
-        print('Baseline loss: {} baseline labels-output correlations: {}' \
-              .format(loss, corr), flush=True)
+        print('Baseline loss: {}'.format(loss), flush=True)
 
 
     def print_epoch_results(self, train_results, valid_results):
@@ -247,12 +248,11 @@ class RegressionHandler(TaskHandler):
         loss_valid = valid_results['losses'].sum()/nb_samples_valid
 
         # Correlation between model output and labels
-        corr_train = train_results['correlations'].sum()/nb_samples_train
-        corr_valid = valid_results['correlations'].sum()/nb_samples_valid
+        #corr_train = train_results['correlations'].sum()/nb_samples_train
+        #corr_valid = valid_results['correlations'].sum()/nb_samples_valid
 
-        print('train loss: {} train correlation: {}'
-              '\nvalid loss: {} valid correlation: {}'.format(
-              loss_train, corr_train, loss_valid, corr_valid), flush=True)
+        print('train loss: {} valid loss: {}'.format(
+              loss_train, loss_valid), flush=True)
 
 
     def print_resumed_best_results(self, results):
@@ -264,9 +264,9 @@ class RegressionHandler(TaskHandler):
         nb_samples = len(results['samples'])
 
         loss = results['losses'].sum()/nb_samples
-        corr = results['correlations'].sum()/nb_samples
+        #corr = results['correlations'].sum()/nb_samples
 
-        print('Test loss: {} test correlation: {}'.format(loss, corr))
+        print('Test loss: {}'.format(loss))
 
 
     def init_best_results(self, results):
