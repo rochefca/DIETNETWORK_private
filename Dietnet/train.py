@@ -176,7 +176,7 @@ def main():
     # Batch generators
     batch_size = config['batch_size']
     train_generator = DataLoader(train_set,
-            batch_size=batch_size, num_workers=0)
+            batch_size=batch_size, num_workers=0, drop_last=True)
 
     valid_generator = DataLoader(valid_set,
             batch_size=batch_size, shuffle=False, num_workers=0)
@@ -249,16 +249,28 @@ def main():
 
         # Train step
         model_handler.model.train()
+        train_step_start_time = time.time()
+
         train_results = mlu.train_step(model_handler, device, train_generator,
                                        mus, sigmas, args.normalize, optimizer)
 
+        print('Train step executed in {} seconds'.format(time.time()-train_step_start_time))
+
         # Eval step
         model_handler.model.eval()
-        evaluated_train_results = mlu.eval_step(model_handler, device, valid_generator,
-                                                mus, sigmas, args.normalize)
+        train_eval_step_start_time = time.time()
 
-        valid_results = mlu.eval_step(model_handler, device, train_generator,
+        evaluated_train_results = mlu.eval_step(model_handler, device, train_generator,
+                                                mus, sigmas, args.normalize)
+        print('Train eval step executed in {} seconds'.format(time.time()-train_eval_step_start_time))
+
+
+        eval_step_start_time = time.time()
+
+        valid_results = mlu.eval_step(model_handler, device, valid_generator,
                                       mus, sigmas, args.normalize)
+
+        print('Eval step executed in {} seconds'.format(time.time()-eval_step_start_time))
 
         # Print epoch results
         model_handler.task_handler.print_epoch_results(
