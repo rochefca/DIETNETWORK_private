@@ -76,7 +76,7 @@ class MainNetwork(nn.Module):
         self.input_dropout = nn.Dropout(p=input_dropout)
 
         # Dropout
-        self.dropout = nn.Dropout()
+        self.dropout = nn.Dropout(config['dropout_main'])
 
         # ---Layers and batchnorm: self.hidden_layers and self.bn---
         nb_hidden_u = config['nb_hidden_u_aux'][-1:] + config['nb_hidden_u_main']

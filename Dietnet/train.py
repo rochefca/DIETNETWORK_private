@@ -47,9 +47,6 @@ def main():
     pprint.pprint(config)
     print('---\n')
 
-    # Task : clasification or regression
-    #task = args.task
-
     # Set device
     print('\n---\nSetting device')
     print('Cuda available:', torch.cuda.is_available())
@@ -296,6 +293,10 @@ def main():
         for param_group in optimizer.param_groups:
             param_group['lr'] = \
                 param_group['lr']*config['learning_rate_annealing']
+
+        # Print new LR
+        for param_group in optimizer.param_groups:
+            print('LR:', param_group['lr'])
 
 
         # Check model improvement and update best results
