@@ -64,6 +64,7 @@ class DietNetworkHandler(modelHandler):
                     + str(config['nb_hidden_u_aux'][-1]) + '_' \
                     + str(config['nb_hidden_u_main'])[1:-1].replace(', ','_') \
                 + '_inpdrop_' + str(config['input_dropout']) \
+                + '_maindrop_' + str(config['dropout_main']) \
                 + '_lr_' + str(config['learning_rate']) \
                 + '_lra_' + str(config['learning_rate_annealing']) \
                 + '_uniform_init_limit_' + str(config['uniform_init_limit']) \
@@ -90,6 +91,7 @@ class MlpHandler(modelHandler):
                 + '_layers_' \
                     + str(config['nb_hidden_u'])[1:-1].replace(', ','_') \
                 + '_inpdrop_' + str(config['input_dropout']) \
+                + '_drop_' + str(config['dropout']) \
                 + '_lr_' + str(config['learning_rate']) \
                 + '_lra_' + str(config['learning_rate_annealing']) \
                 + '_epochs_' + str(config['epochs']) \
