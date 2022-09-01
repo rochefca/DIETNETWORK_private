@@ -264,7 +264,7 @@ class Mlp(nn.Module):
         self.input_dropout = nn.Dropout(p=input_dropout)
 
         # Dropout
-        self.dropout = nn.Dropout()
+        self.dropout = nn.Dropout(config['dropout'])
 
         # Layers definition
         n_hidden_u = config['nb_hidden_u'] # nb of hidden units per layer

@@ -172,7 +172,7 @@ def main():
 
     # Batch generators
     batch_size = config['batch_size']
-    train_generator = DataLoader(train_set,
+    train_generator = DataLoader(train_set, shuffle=True,
             batch_size=batch_size, num_workers=0, drop_last=True)
 
     valid_generator = DataLoader(valid_set,
