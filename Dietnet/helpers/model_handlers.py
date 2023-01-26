@@ -20,8 +20,8 @@ class modelHandler:
         self.model = model
         self.task_handler = task_handler
 
-    def forward(self, x):
-        return self.model(x)
+    def forward(self, x, results_fullpath, epoch, batch):
+        return self.model(x, results_fullpath, epoch, batch)
 
     def save(self):
         raise NotImplementedError

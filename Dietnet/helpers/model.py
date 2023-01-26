@@ -1,3 +1,4 @@
+import os
 import sys
 import numpy as np
 import h5py
@@ -230,13 +231,19 @@ class DietNetwork(nn.Module):
         self.main_net = MainNetwork(n_feats, n_targets, config, param_init)
 
 
-    def forward(self, x_batch, save_layers=False):
+    def forward(self, x_batch, results_fullpath,
+                epoch, batch, save_layers=False):
         # Forward pass in auxilliary net
         aux_net_out = self.aux_net(self.embedding)
 
         # Forward pass in discrim net
         self.fatLayer_weights = torch.transpose(aux_net_out,1,0)
         main_net_out = self.main_net(x_batch, self.fatLayer_weights, save_layers)
+
+        # Save fat layer weights
+        filename = 'fatLayer_weights_epoch'+str(epoch)+'_batch'+str(batch)
+        np.savez(os.path.join(results_fullpath, filename),
+                 fatLayer_weights=aux_net_out.detach().cpu())
 
         return main_net_out
 

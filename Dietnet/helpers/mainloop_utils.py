@@ -12,7 +12,7 @@ from helpers import dataset_utils as du
 
 
 def train_step(mod_handler, device, train_generator,
-               mus, sigmas, normalize, optimizer):
+               mus, sigmas, normalize, optimizer, results_fullpath, epoch):
 
     task_handler = mod_handler.task_handler
 
@@ -20,7 +20,7 @@ def train_step(mod_handler, device, train_generator,
     task_handler.zero_batch_results()
 
     # Looping through batches
-    for batch_nb, (x_batch, y_batch, samples) in enumerate(train_generator):
+    for batch, (x_batch, y_batch, samples) in enumerate(train_generator):
         # Append batch samples and labels
         task_handler.compile_samples(samples)
         task_handler.compile_labels(y_batch)
@@ -42,7 +42,8 @@ def train_step(mod_handler, device, train_generator,
         optimizer.zero_grad()
 
         # Forward pass
-        model_out = mod_handler.forward(x_batch)
+        model_out = mod_handler.forward(x_batch, results_fullpath,
+                                        epoch, batch)
 
         # Loss
         loss = task_handler.compute_loss(model_out, y_batch)
@@ -66,7 +67,8 @@ def train_step(mod_handler, device, train_generator,
     return task_handler.batches_results.copy()
 
 
-def eval_step(mod_handler, device, valid_generator, mus, sigmas, normalize):
+def eval_step(mod_handler, device, valid_generator,
+              mus, sigmas, normalize, results_fullpath, epoch):
 
     task_handler = mod_handler.task_handler
 
@@ -92,7 +94,8 @@ def eval_step(mod_handler, device, valid_generator, mus, sigmas, normalize):
             x_batch = du.normalize(x_batch, mus, sigmas)
 
         # Forward pass
-        model_out = mod_handler.forward(x_batch)
+        model_out = mod_handler.forward(x_batch, results_fullpath,
+                                        epoch, batch)
 
         # Loss
         loss = task_handler.compute_loss(model_out, y_batch)
