@@ -69,7 +69,7 @@ class MainNetwork(nn.Module):
 
         self.hidden_layers = []
         self.bn_fatLayer = None
-        self.bn = [] # batch normalization (all layers except first)
+        self.bn = [] # batch normalization
         self.out = None # Output layer
         self.incl_softmax = incl_softmax
 
@@ -79,7 +79,7 @@ class MainNetwork(nn.Module):
         # Dropout
         self.dropout = nn.Dropout(config['dropout_main'])
 
-        # ---Layers and batchnorm: self.hidden_layers and self.bn---
+        # --- Layers and batchnorm ---
         nb_hidden_u = config['nb_hidden_u_aux'][-1:] + config['nb_hidden_u_main']
         for i in range(len(nb_hidden_u)):
             # First layer: linear function handle in forward function below
@@ -240,12 +240,20 @@ class DietNetwork(nn.Module):
         self.fatLayer_weights = torch.transpose(aux_net_out,1,0)
         main_net_out = self.main_net(x_batch, self.fatLayer_weights, save_layers)
 
+        # TO REMOVE : I WILL PUT THIS SOMEWHERE ELSE
+        """
         # Save fat layer weights
         filename = 'fatLayer_weights_epoch'+str(epoch)+'_batch'+str(batch)
         np.savez(os.path.join(results_fullpath, filename),
                  fatLayer_weights=aux_net_out.detach().cpu())
-
+        """
         return main_net_out
+
+
+    def save_parameters(self, filename):
+        print(self.aux_net.hidden_layers)
+        print(self.fatLayer_weights.size())
+        print(self.main_net.hidden_layers)
 
 
 class Mlp(nn.Module):
