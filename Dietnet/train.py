@@ -261,10 +261,11 @@ def main():
         model_handler.model.eval()
 
         # Save weights
+        """
         filename = 'tmp'
         model_handler.model.save_parameters(filename)
         sys.exit()
-
+        """
         # Monitoring performance on train set (eval step with train set)
         train_monit_step_start_time = time.time()
 
@@ -272,7 +273,7 @@ def main():
                                                 mus, sigmas, args.normalize,
                                                 results_fullpath, epoch)
 
-        train_monit_step_time = time.time() - train_monit_start_time
+        train_monit_step_time = time.time() - train_monit_step_start_time
         #print('Train eval step executed in {} seconds'.format(time.time()-train_eval_step_start_time))
 
 

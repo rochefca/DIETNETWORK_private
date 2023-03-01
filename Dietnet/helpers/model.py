@@ -240,13 +240,13 @@ class DietNetwork(nn.Module):
         self.fatLayer_weights = torch.transpose(aux_net_out,1,0)
         main_net_out = self.main_net(x_batch, self.fatLayer_weights, save_layers)
 
-        # TO REMOVE : I WILL PUT THIS SOMEWHERE ELSE
-        """
+        # SAVE THE WEIGHTS SOMEWHERE ELSE IN THE CODE
         # Save fat layer weights
-        filename = 'fatLayer_weights_epoch'+str(epoch)+'_batch'+str(batch)
-        np.savez(os.path.join(results_fullpath, filename),
-                 fatLayer_weights=aux_net_out.detach().cpu())
-        """
+        if batch == 0:
+            filename = 'fatLayer_weights_epoch'+str(epoch)+'_batch'+str(batch)
+            np.savez(os.path.join(results_fullpath, filename),
+                    fatLayer_weights=aux_net_out.detach().cpu())
+
         return main_net_out
 
 
