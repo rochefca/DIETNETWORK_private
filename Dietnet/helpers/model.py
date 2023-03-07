@@ -48,8 +48,23 @@ class AuxiliaryNetwork(nn.Module):
                 nn.init.uniform_(layer.weight, a=-uniform_init_limit, b=uniform_init_limit)
 
 
-    def forward(self, x):
+    def forward(self, x, results_fullpath, epoch, batch, step, save_weights):
         for i,layer in enumerate(self.hidden_layers):
+            # Save layer params
+            if ((batch == 0) and (step == 'valid')):
+                # Save layer weights
+                filename = 'auxLayer_'+str(i)+'_weights_epoch'+str(epoch)+'_batch'+str(batch)
+                np.savez(os.path.join(results_fullpath, filename),
+                         weights=layer.weight.detach().cpu())
+                # Save layer bias
+                filename = 'auxLayer_'+str(i)+'_bias_epoch'+str(epoch)+'_batch'+str(batch)
+                if layer.bias is not None:
+                    np.savez(os.path.join(results_fullpath, filename),
+                             bias=layer.bias.detach().cpu())
+                else:
+                    np.savez(os.path.join(results_fullpath, filename),
+                             bias=np.array([]))
+            # Forward pass
             ze = layer(x)
             ae = torch.tanh(ze)
             x = ae
@@ -134,7 +149,8 @@ class MainNetwork(nn.Module):
         nn.init.zeros_(self.out.bias)
 
 
-    def forward(self, x, fatLayer_weights, save_layers=False):
+    def forward(self, x, fatLayer_weights, results_fullpath, epoch, batch,
+                step, save_layers=False):
         # input size: batch_size x n_feats
         # weight = comes from feat embedding net
         # now ^^^ is passed with forward
@@ -149,7 +165,19 @@ class MainNetwork(nn.Module):
 
         # Hidden layers
         next_input = a1
-        for layer, bn in zip(self.hidden_layers, self.bn):
+        for i,(layer, bn) in enumerate(zip(self.hidden_layers, self.bn)):
+            # Save layer params
+            if ((batch == 0) and (step == 'valid')):
+                # Save layer weights
+                filename = 'mainLayer_'+str(i)+'_weights_epoch'+str(epoch)+'_batch'+str(batch)
+                np.savez(os.path.join(results_fullpath, filename),
+                         weights=layer.weight.detach().cpu())
+                # Save layer bias
+                filename = 'mainLayer_'+str(i)+'_bias_epoch'+str(epoch)+'_batch'+str(batch)
+                np.savez(os.path.join(results_fullpath, filename),
+                         bias=layer.bias.detach().cpu())
+
+            # Forward pass
             z = layer(next_input)
             a = torch.relu(z)
             a = bn(a)
@@ -157,6 +185,13 @@ class MainNetwork(nn.Module):
             next_input = a
 
         # Output layer
+        if ((batch == 0) and (step == 'valid')):
+            filename = 'mainLayer_out_weights_epoch'+str(epoch)+'_batch'+str(batch)
+            np.savez(os.path.join(results_fullpath, filename),
+                     weights=self.out.weight.detach().cpu())
+            filename = 'mainLayer_out_bias_epoch'+str(epoch)+'_batch'+str(batch)
+            np.savez(os.path.join(results_fullpath, filename),
+                     bais=self.out.bias.detach().cpu())
         out = self.out(next_input)
 
         # Softmax will be computed in the loss. But want this during attributions
@@ -211,7 +246,7 @@ class DietNetwork(nn.Module):
         else:
             n_feats_emb = emb.size()[1]
 
-        # Instantiate auxiliary netwrok
+        # Instantiate auxiliary network
         self.aux_net = AuxiliaryNetwork(n_feats_emb, config, param_init)
 
         # ----------------------------------------
@@ -232,20 +267,23 @@ class DietNetwork(nn.Module):
 
 
     def forward(self, x_batch, results_fullpath,
-                epoch, batch, save_layers=False):
+                epoch, batch, step, save_layers=False):
         # Forward pass in auxilliary net
-        aux_net_out = self.aux_net(self.embedding)
+        aux_net_out = self.aux_net(self.embedding, results_fullpath,
+                                   epoch, batch, step, save_weights=False)
 
         # Forward pass in discrim net
         self.fatLayer_weights = torch.transpose(aux_net_out,1,0)
-        main_net_out = self.main_net(x_batch, self.fatLayer_weights, save_layers)
+        main_net_out = self.main_net(x_batch, self.fatLayer_weights,
+                                     results_fullpath,
+                                     epoch, batch, step, save_layers)
 
         # SAVE THE WEIGHTS SOMEWHERE ELSE IN THE CODE
         # Save fat layer weights
-        if batch == 0:
+        if ((batch == 0) and (step == 'train')):
             filename = 'fatLayer_weights_epoch'+str(epoch)+'_batch'+str(batch)
             np.savez(os.path.join(results_fullpath, filename),
-                    fatLayer_weights=aux_net_out.detach().cpu())
+                     fatLayer_weights=aux_net_out.detach().cpu())
 
         return main_net_out
 

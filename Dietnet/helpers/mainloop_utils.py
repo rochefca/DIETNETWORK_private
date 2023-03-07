@@ -43,7 +43,7 @@ def train_step(mod_handler, device, train_generator,
 
         # Forward pass
         model_out = mod_handler.forward(x_batch, results_fullpath,
-                                        epoch, batch)
+                                        epoch, batch, 'train')
 
         # Loss
         loss = task_handler.compute_loss(model_out, y_batch)
@@ -95,7 +95,7 @@ def eval_step(mod_handler, device, valid_generator,
 
         # Forward pass
         model_out = mod_handler.forward(x_batch, results_fullpath,
-                                        epoch, batch)
+                                        epoch, batch, 'valid')
 
         # Loss
         loss = task_handler.compute_loss(model_out, y_batch)
