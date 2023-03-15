@@ -53,7 +53,7 @@ def main():
         # Embedding on valid set
         elif args.only_valid:
             x = x_valid
-            y = y_train
+            y = y_valid
         # Embedding on training set
         else:
             x = x_train

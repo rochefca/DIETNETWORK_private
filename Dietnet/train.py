@@ -205,7 +205,9 @@ def main():
         model_handler.model.eval()
 
         baseline = mlu.eval_step(model_handler, device, valid_generator,
-                                 mus, sigmas, args.normalize)
+                                 mus, sigmas, args.normalize,
+                                 results_fullpath, 'baseline')
+
 
         # Print baseline results
         model_handler.task_handler.print_baseline_results(baseline)
@@ -244,30 +246,46 @@ def main():
         epoch_start_time = time.time()
         print('Epoch {} of {}'.format(epoch+1, n_epochs), flush=True)
 
-        # Train step
+        #  --- Train step ---
         model_handler.model.train()
         train_step_start_time = time.time()
 
         train_results = mlu.train_step(model_handler, device, train_generator,
-                                       mus, sigmas, args.normalize, optimizer)
+                                       mus, sigmas, args.normalize, optimizer,
+                                       results_fullpath, epoch)
 
-        print('Train step executed in {} seconds'.format(time.time()-train_step_start_time))
+        train_step_time = time.time() - train_step_start_time
+        #print('Train step executed in {} seconds'.format(time.time()-train_step_start_time))
 
-        # Eval step
+        # --- Monitoring and evaluation step ---
         model_handler.model.eval()
-        train_eval_step_start_time = time.time()
+
+        # Save weights
+        """
+        filename = 'tmp'
+        model_handler.model.save_parameters(filename)
+        sys.exit()
+        """
+        # Monitoring performance on train set (eval step with train set)
+        train_monit_step_start_time = time.time()
 
         evaluated_train_results = mlu.eval_step(model_handler, device, train_generator,
-                                                mus, sigmas, args.normalize)
-        print('Train eval step executed in {} seconds'.format(time.time()-train_eval_step_start_time))
+                                                mus, sigmas, args.normalize,
+                                                results_fullpath, epoch)
+
+        train_monit_step_time = time.time() - train_monit_step_start_time
+        #print('Train eval step executed in {} seconds'.format(time.time()-train_eval_step_start_time))
 
 
-        eval_step_start_time = time.time()
+        # Monitoring performance on valid set (eval step with valid set)
+        valid_monit_step_start_time = time.time()
 
         valid_results = mlu.eval_step(model_handler, device, valid_generator,
-                                      mus, sigmas, args.normalize)
+                                      mus, sigmas, args.normalize,
+                                      results_fullpath, epoch)
 
-        print('Eval step executed in {} seconds'.format(time.time()-eval_step_start_time))
+        valid_monit_step_time = time.time() - valid_monit_step_start_time
+        #print('Eval step executed in {} seconds'.format(time.time()-eval_step_start_time))
 
         # Print epoch results
         model_handler.task_handler.print_epoch_results(
@@ -350,7 +368,8 @@ def main():
     # Test step
     model_handler.model.eval()
     test_results = mlu.eval_step(model_handler, device, test_generator,
-                                 mus, sigmas, args.normalize)
+                                 mus, sigmas, args.normalize,
+                                 results_fullpath, 'test_step')
 
     model_handler.task_handler.print_test_results(test_results)
 
