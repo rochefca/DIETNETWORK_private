@@ -197,6 +197,7 @@ def parse_args():
             action='store_true',
             help=('Use this flag to compute embedding only on samples '
                   ' in the test set')
+            )
 
     parser.add_argument(
             '--out',
