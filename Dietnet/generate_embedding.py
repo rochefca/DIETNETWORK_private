@@ -56,7 +56,7 @@ def main():
             y = y_valid
         # Embedding on test set
         if args.only_test:
-            x = x_text
+            x = x_test
             y = y_test
         # Embedding on training set
         else:
