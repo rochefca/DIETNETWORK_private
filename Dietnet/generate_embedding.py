@@ -193,7 +193,7 @@ def parse_args():
             )
 
     parser.add_argument(
-            'only-test',
+            '--only-test',
             action='store_true',
             help=('Use this flag to compute embedding only on samples '
                   ' in the test set')
