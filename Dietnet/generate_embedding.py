@@ -44,7 +44,7 @@ def main():
         (_,_,_,
          x_train, y_train, _,
          x_valid, y_valid, _,
-         _,_,_) = du.get_fold_data(fold, indices_byfold, dataset_file, label=CLASS_LABEL)
+         x_test, y_test,_) = du.get_fold_data(fold, indices_byfold, dataset_file, label=CLASS_LABEL)
 
         # Embedding on train+valid sets
         if args.include_valid:
@@ -54,6 +54,10 @@ def main():
         elif args.only_valid:
             x = x_valid
             y = y_valid
+        # Embedding on test set
+        if args.only_test:
+            x = x_text
+            y = y_test
         # Embedding on training set
         else:
             x = x_train
@@ -185,8 +189,14 @@ def parse_args():
             '--only-valid',
             action='store_true',
             help=('Use this flag to compute embedding only on samples '
-                  ' of the validation set')
+                  ' in the validation set')
             )
+
+    parser.add_argument(
+            'only-test',
+            action='store_true',
+            help=('Use this flag to compute embedding only on samples '
+                  ' in the test set')
 
     parser.add_argument(
             '--out',
