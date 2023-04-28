@@ -30,16 +30,57 @@ from helpers.task_handlers import ClassificationHandler, RegressionHandler
 
 
 def main():
-    print('in main', flush=True)
-    args = parse_args()
-
-    # Monitoring time to execute the whole experiment
+    # Monitoring execution time
     exp_start_time = time.time()
 
     # ----------------------------------------
     #        EXPERIMENT CONFIGURATION
     # ----------------------------------------
-    # Experiment's hyperparameters
+
+    # -------------
+    # Loading args
+    # -------------
+    # Where to save the results:
+    # --exp-path: Path to directory where results will be saved
+    # --exp-name: Dir where to save results (dir will be created in exp-path)
+
+    # The files to provide:
+    # --config: Yaml file of hyperparameters
+    # --dataset: Hdf5 file
+    # --partition: npz file (samples partitioning of folds)
+    # --embedding: npz file, one embedding per fold
+    # --input-features-stats: npz file, stats per fold
+
+    # Specifications
+    # --model: {Dietnet, Mlp} : which model to use
+    # --normalize: Flag used to normalize or not input features
+    # --task: {classification, regression}
+    # --which-fold
+
+    # Other args
+    # --resume-training: continue training from last saved epoch
+    # --param-init: PAS FONCTIONNEL DANS CETTE IMPLEM
+    # --comet-ml et --comet-ml-project-name : PAS SURE QUE ÇA FONCTIONNE ENCORE CETTE CHOSE
+    # --optimization : JE PENSE QUE C'ÉTAIT AVEC COMET
+    args = parse_args()
+
+
+    # ---------------
+    # Loading config
+    # ---------------
+    # Load hyperparameters from config file
+    # Config :
+    #   - batch_size
+    #   - epochs
+    #   - input_dropout
+    #   - dropout_main
+    #   - learning_rate
+    #   - learning_rate_annealing
+    #   - nb_hidden_u_aux
+    #   - nb_hidden_u_main
+    #   - patience
+    #   - seed
+    #   - uniform_init_limit
     f = open(args.config, 'r')
     config = yaml.load(f, Loader=yaml.FullLoader)
     f.close()
@@ -197,27 +238,34 @@ def main():
     max_patience = config['patience']
     has_early_stoped = False
 
-    # Baseline
+
+    # ----------------------------
+    # BASELINE OR RESUME TRAINING
+    # ----------------------------
+    # --- Baseline: a first forward pass with validation set ---
     if not args.resume_training:
         print('\n---\nComputing baseline (forward pass in model with valid set)')
         baseline_start_time = time.time()
 
         model_handler.model.eval()
 
-        baseline = mlu.eval_step(model_handler, device, valid_generator,
+        baseline = mlu.eval_step(model_handler,
+                                 device,
+                                 valid_set,
+                                 valid_generator,
                                  mus, sigmas, args.normalize,
                                  results_fullpath, 'baseline')
 
+        # Init best results
+        model_handler.task_handler.init_best_epoch_results(baseline)
 
         # Print baseline results
         model_handler.task_handler.print_baseline_results(baseline)
         print('Computed baseline in {} seconds'.format(
             time.time() - baseline_start_time))
 
-        # Init best results
-        model_handler.task_handler.init_best_results(baseline)
 
-    # Resume training
+    # --- Resume training: load last model and results ----
     else:
         print('\n---\nResuming training')
         # Load last model
@@ -240,7 +288,10 @@ def main():
         print('Patience is {}'.format(patience))
         model_handler.task_handler.print_resumed_best_results(best_checkpoint['best_results'])
 
-    # Training loop
+
+    # --------------
+    # TRAINING LOOP
+    # --------------
     print('\nTraining:')
     for epoch in range(start_epoch, n_epochs):
         epoch_start_time = time.time()
@@ -250,14 +301,18 @@ def main():
         model_handler.model.train()
         train_step_start_time = time.time()
 
-        train_results = mlu.train_step(model_handler, device, train_generator,
+        train_results = mlu.train_step(model_handler,
+                                       device,
+                                       train_set,
+                                       train_generator,
                                        mus, sigmas, args.normalize, optimizer,
                                        results_fullpath, epoch)
 
+        # Monitoring time execution
         train_step_time = time.time() - train_step_start_time
         #print('Train step executed in {} seconds'.format(time.time()-train_step_start_time))
 
-        # --- Monitoring and evaluation step ---
+        # --- Eval step ---
         model_handler.model.eval()
 
         # Save weights
@@ -269,7 +324,10 @@ def main():
         # Monitoring performance on train set (eval step with train set)
         train_monit_step_start_time = time.time()
 
-        evaluated_train_results = mlu.eval_step(model_handler, device, train_generator,
+        evaluated_train_results = mlu.eval_step(model_handler,
+                                                device,
+                                                train_set,
+                                                train_generator,
                                                 mus, sigmas, args.normalize,
                                                 results_fullpath, epoch)
 
@@ -280,7 +338,10 @@ def main():
         # Monitoring performance on valid set (eval step with valid set)
         valid_monit_step_start_time = time.time()
 
-        valid_results = mlu.eval_step(model_handler, device, valid_generator,
+        valid_results = mlu.eval_step(model_handler,
+                                      device,
+                                      valid_set,
+                                      valid_generator,
                                       mus, sigmas, args.normalize,
                                       results_fullpath, epoch)
 
@@ -288,13 +349,14 @@ def main():
         #print('Eval step executed in {} seconds'.format(time.time()-eval_step_start_time))
 
         # Print epoch results
+        print('Train results:')
         model_handler.task_handler.print_epoch_results(
                 train_results, valid_results)
-        print('New train results:')
+        print('Monitored results:')
         model_handler.task_handler.print_epoch_results(
                 evaluated_train_results, valid_results)
 
-        # Write epoch results
+        # Write epoch predictions
         train_filename = 'train_results_epoch'+str(epoch+1)
         valid_filename = 'valid_results_epoch'+str(epoch+1)
 
@@ -326,21 +388,22 @@ def main():
             # Save best model
             torch.save({'epoch': epoch+1,
                 'model_state_dict': model_handler.model.state_dict(),
-                'best_results': model_handler.task_handler.best_results},
+                'best_results': model_handler.task_handler.best_epoch_results},
                 bestmodel_fullpath)
             print('Saving best model')
 
         else:
             patience += 1
 
+        print('Best results:', model_handler.task_handler.best_epoch_results)
+
         # Save last model
         torch.save({'epoch': epoch+1,
             'model_state_dict': model_handler.model.state_dict(),
-            'results': model_handler.task_handler.best_results,
             'patience':patience},
             lastmodel_fullpath)
 
-        print('Epoch execution time: {} seconds'.format(
+        print('Epoch execution time: {} secondsi\n'.format(
               time.time() - epoch_start_time))
 
         # Check early stopping
@@ -367,7 +430,10 @@ def main():
 
     # Test step
     model_handler.model.eval()
-    test_results = mlu.eval_step(model_handler, device, test_generator,
+    test_results = mlu.eval_step(model_handler,
+                                 device,
+                                 test_set,
+                                 test_generator,
                                  mus, sigmas, args.normalize,
                                  results_fullpath, 'test_step')
 

@@ -10,26 +10,11 @@ class TaskHandler:
         self.batches_results = batches_results
         self.best_results = dict()
 
-    def zero_batch_results(self):
-        for k,v in self.batches_results.items():
-            self.batches_results[k] = np.array([])
-
-    def compile_samples(self, samples):
-        self.batches_results['samples'] = np.concatenate(
-                [self.batches_results['samples'], samples])
-
-    def compile_labels(self, labels):
-        self.batches_results['ys'] = np.concatenate(
-                [self.batches_results['ys'], labels])
-
     def format_ybatch(self, y_batch):
         return y_batch
 
     def compute_loss(self, model_out, y_batch):
         return self.criterion(model_out, y_batch)
-
-    def get_sum_loss(self, loss, y_batch):
-         return loss.item()*len(y_batch)
 
 
 class ClassificationHandler(TaskHandler):
@@ -173,56 +158,47 @@ class ClassificationHandler(TaskHandler):
 
 class RegressionHandler(TaskHandler):
     def __init__(self, dataset_filename, criterion):
-        batches_results = {'losses':np.array([]),
-                         'correlations':np.array([]), # between outputs/labels
-                         'preds':np.array([]), # the prediction for each sample
-                         'ys':np.array([]), # labels of the batch
-                         'samples':np.array([]) # samples of the batch
-                         }
-
-        super(RegressionHandler, self).__init__(criterion, batches_results)
-
         # Task name
         self.name = 'regression'
 
+        # Loss for this task
+        self.criterion = criterion
 
-    # Ovewrite from parent class
+        # Dict for saving results of each batch
+        # (Will be { losses_wo_reduction:[...], preds:[...],
+        # ys:[...], samples:[...] })
+        self.batches_results = dict()
+
+        # Dict for remembering results of the best epoch obtained so far
+        # {mean_loss = float}
+        self.best_epoch_results = dict()
+
+
+    # RESHAPE : ADDING BATCH DIM
     def format_ybatch(self, y_batch):
         return y_batch.unsqueeze(1)
 
 
+    # POUR AVOIR DE FLOAT 32?
     def get_label(self, f, index):
         y = np.array(f['regression_labels'][index], dtype=np.float32)
 
         return y
 
 
-    def get_batch_results(self, model_out, y_batch):
-        with torch.no_grad():
-            # Pred : the output of the network for each sample
-            # We .squeeze(dim=1) the model output : because model
-            # output shape is batch_sizex1 and we want batch_size only
-            self.batches_results['preds'] = np.concatenate(
-                    [self.batches_results['preds'],
-                     model_out.squeeze(dim=1).detach().cpu().numpy()])
+    def init_batches_results(self, dataset, dataloader):
+        # Init the batch results with empty arrays
+        self.batches_results['losses_wo_reduction'] = np.zeros(len(dataloader))
+        self.batches_results['preds'] = np.zeros(len(dataset))
+        self.batches_results['ys'] = np.zeros(len(dataset))
+        self.batches_results['samples'] = np.zeros(len(dataset))
 
-            # Correlation
-            # Pearson's r : SUM[(xi - xmean)(yi-ymean)] /
-            #               SQRT[SUM[(xi-xmean)^2]*SUM[(yi-ymean)^2]]
-            """
-            with torch.no_grad():
-                vx =  model_out - torch.mean(model_out)
-                vy = y_batch - torch.mean(y_batch)
 
-                r = torch.sum(vx*vy) / \
-                    (torch.sqrt(torch.sum(vx**2)) * torch.sqrt(torch.sum(vy**2)))
-
-                # Multiply correlation by batch len (to account for unequal batches
-                sum_r = r*y_batch.size()[0]
-
-            self.batches_results['correlations'] = np.append(
-                    self.batches_results['correlations'], sum_r.item())
-            """
+    def update_batches_preds(self, model_out, bstart, bend):
+        # Model out is dim batch_size x 1 (each output is it's own tensor)
+        # .squeeze() makes the dim batch_size (1 array of all outputs)
+        self.batches_results['preds'][bstart:bend] = \
+                model_out.detach().squeeze().cpu().numpy()
 
 
     def print_baseline_results(self, baseline_results):
@@ -230,54 +206,55 @@ class RegressionHandler(TaskHandler):
         nb_samples = len(baseline_results['samples'])
 
         # Baseline loss
-        loss = baseline_results['losses'].sum()/nb_samples
-
-        # Baseline correlation between labels and network outputs
-        #corr = baseline_results['correlations'].sum()/nb_samples
+        loss = baseline_results['losses_wo_reduction'].sum()/nb_samples
 
         print('Baseline loss: {}'.format(loss), flush=True)
 
 
     def print_epoch_results(self, train_results, valid_results):
+        """
+        Input
+            train_results, valid resutls: a copy of
+            self.batches_results = {losses_wo_reduction, preds, samples, ys}
+
+        Output
+            None, prints the mean train and valid epoch loss
+        """
+
         # Nb of samples
         nb_samples_train = len(train_results['samples'])
         nb_samples_valid = len(valid_results['samples'])
 
         # Loss
-        loss_train = train_results['losses'].sum()/nb_samples_train
-        loss_valid = valid_results['losses'].sum()/nb_samples_valid
-
-        # Correlation between model output and labels
-        #corr_train = train_results['correlations'].sum()/nb_samples_train
-        #corr_valid = valid_results['correlations'].sum()/nb_samples_valid
+        loss_train = train_results['losses_wo_reduction'].sum()/nb_samples_train
+        loss_valid = valid_results['losses_wo_reduction'].sum()/nb_samples_valid
 
         print('train loss: {} valid loss: {}'.format(
               loss_train, loss_valid), flush=True)
 
 
     def print_resumed_best_results(self, results):
-        print('best valid loss: {}'.format(results['loss']))
+        print('best valid loss: {}'.format(results['mean_loss']))
 
 
     def print_test_results(self, results):
         # Nb samples
         nb_samples = len(results['samples'])
 
-        loss = results['losses'].sum()/nb_samples
-        #corr = results['correlations'].sum()/nb_samples
+        loss = results['losses_wo_reduction'].sum()/nb_samples
 
         print('Test loss: {}'.format(loss))
 
 
-    def init_best_results(self, results):
+    def init_best_epoch_results(self, results):
         # Nb samples
         nb_samples = len(results['samples'])
         # Best loss
-        self.best_results['loss'] = results['losses'].sum()/nb_samples
+        self.best_epoch_results['mean_loss'] = results['losses_wo_reduction'].sum()/nb_samples
 
 
     def resume_best_results(self, results):
-        self.best_results['loss'] = results['loss']
+        self.best_results['mean_loss'] = results['mean_loss']
 
 
     def update_best_results(self, results):
@@ -286,13 +263,13 @@ class RegressionHandler(TaskHandler):
         # Nb samples
         nb_samples = len(results['samples'])
         # Actual loss
-        loss = results['losses'].sum()/nb_samples
+        loss = results['losses_wo_reduction'].sum()/nb_samples
 
         # Improvement if actual loss is less than best loss
-        if loss < self.best_results['loss']:
+        if loss < self.best_epoch_results['mean_loss']:
             has_improved = True
             # Update best loss
-            self.best_results['loss'] = loss
+            self.best_epoch_results['mean_loss'] = loss
 
         return has_improved
 
@@ -302,5 +279,3 @@ class RegressionHandler(TaskHandler):
                  samples=results['samples'],
                  labels=results['ys'],
                  preds=results['preds'])
-
-

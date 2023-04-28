@@ -11,19 +11,21 @@ from helpers import model
 from helpers import dataset_utils as du
 
 
-def train_step(mod_handler, device, train_generator,
+def train_step(mod_handler, device, train_dataset, train_generator,
                mus, sigmas, normalize, optimizer, results_fullpath, epoch):
 
     task_handler = mod_handler.task_handler
 
-    # Remove batch results from previous epoch
-    task_handler.zero_batch_results()
+    # Reset to 0 batches results from previous epoch
+    task_handler.init_batches_results(train_dataset, train_generator)
 
-    # Looping through batches
+    # Batch start pos (to compile samples and labels)
+    bstart = 0
     for batch, (x_batch, y_batch, samples) in enumerate(train_generator):
-        # Append batch samples and labels
-        task_handler.compile_samples(samples)
-        task_handler.compile_labels(y_batch)
+        # Compile batch samples and labels
+        bend = bstart + len(samples) # batch end pos
+        task_handler.batches_results['samples'][bstart:bend] = samples
+        task_handler.batches_results['ys'][bstart:bend] = y_batch
 
         # Send data to device
         x_batch, y_batch = x_batch.to(device), y_batch.to(device)
@@ -54,19 +56,76 @@ def train_step(mod_handler, device, train_generator,
         # Optimize
         optimizer.step()
 
-        # Batch sum loss (to account for unequal batches)
-        sum_loss = task_handler.get_sum_loss(loss, y_batch)
+        # Loss summed over all outputs (by default Pytorch returns mean loss
+        # computed over nb of outputs)
+        loss_wo_reduction = loss.item()*len(y_batch)
 
-        # Append sum loss to batch results
-        task_handler.batches_results['losses'] = np.append(
-                task_handler.batches_results['losses'], sum_loss)
+        # Compile batch loss wo reduction
+        task_handler.batches_results['losses_wo_reduction'][batch] = \
+                loss_wo_reduction
 
-        # Append other batch results (ex: pred accuracy in classification)
-        task_handler.get_batch_results(model_out, y_batch)
+        # Compile batch predictions
+        task_handler.update_batches_preds(model_out, bstart, bend)
+
+        # Update batch start pos
+        bstart = bend
 
     return task_handler.batches_results.copy()
 
 
+def eval_step(mod_handler, device, eval_dataset, valid_generator,
+              mus, sigmas, normalize, results_fullpath, epoch):
+
+    task_handler = mod_handler.task_handler
+
+    # Reset to 0 batches results from previous epoch
+    task_handler.init_batches_results(eval_dataset, valid_generator)
+
+    # Batch start pos (to compile samples and labels)
+    bstart = 0
+    for batch, (x_batch, y_batch, samples) in enumerate(valid_generator):
+        # Compile batch samples and labels
+        bend = bstart + len(samples) # batch end pos
+        task_handler.batches_results['samples'][bstart:bend] = samples
+        task_handler.batches_results['ys'][bstart:bend] = y_batch
+
+        # Send data to device
+        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+        x_batch = x_batch.float()
+
+        y_batch = task_handler.format_ybatch(y_batch)
+
+        # Replace missing values
+        du.replace_missing_values(x_batch, mus)
+
+        # Normalize
+        if normalize:
+            x_batch = du.normalize(x_batch, mus, sigmas)
+
+        # Forward pass
+        model_out = mod_handler.forward(x_batch, results_fullpath,
+                                        epoch, batch, 'valid')
+
+        # Loss
+        loss = task_handler.compute_loss(model_out, y_batch)
+
+        # Loss summed over all outputs (by default Pytorch returns mean loss
+        # computed over nb of outputs)
+        loss_wo_reduction = loss.item()*len(y_batch)
+
+        # Compile batch loss wo reduction
+        task_handler.batches_results['losses_wo_reduction'][batch] = \
+                loss_wo_reduction
+
+        # Compile batch predictions
+        task_handler.update_batches_preds(model_out, bstart, bend)
+
+        # Update batch start pos
+        bstart = bend
+
+    return task_handler.batches_results.copy()
+
+"""
 def eval_step(mod_handler, device, valid_generator,
               mus, sigmas, normalize, results_fullpath, epoch):
 
@@ -115,7 +174,7 @@ def eval_step(mod_handler, device, valid_generator,
         #    test_pred = torch.cat((test_pred,comb_model_out.detach()), dim=0)
 
     return task_handler.batches_results.copy()
-
+"""
 """
 def test_step(mod_handler, device, test_generator,
         set_size, criterion, mus, sigmas, task, normalize):
