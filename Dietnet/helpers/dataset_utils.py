@@ -6,8 +6,59 @@ import h5py
 
 import torch
 
-
 class FoldDataset(torch.utils.data.Dataset):
+    # These variables are set in train.py
+    dataset_file = None #path to h5py dataset file
+    f = None # Dataset file handler (h5py.File in reading mode)
+    task_handler = None # Classification or regression
+    data_x = None
+    data_y = None
+    data_samples = None
+
+    def __init__(self, set_indexes):
+        self.set_indexes = set_indexes
+
+    def __len__(self):
+        return len(self.set_indexes)
+
+    def __getitem__(self, index):
+        # Data of all sets (train, valid, test) is in one file
+        # so we convert the index to match file index
+        file_index = self.set_indexes[index]
+
+        # Input features
+        #x = np.array(self.f['inputs'][file_index], dtype=np.int8)
+        x = self.data_x[file_index]
+
+
+        # Label
+        #y = self.task_handler.get_label(self.f, file_index)
+        y = self.data_y[file_index]
+        """
+        if self.task == 'classification':
+            #y = (self.f['class_labels'][file_index]).astype(np.int64)
+            y = np.array(self.f['class_labels'][file_index],
+                         dtype=np.int64)
+        elif self.task == 'regression':
+            #y = (self.f['regression_labels'][file_index]).astype(np.float32)
+            y = np.array(self.f['regression_labels'][file_index],
+                         dtype=np.float32)
+        """
+        # Sample id
+        #sample = (self.f['samples'][file_index]).astype(np.str_)
+        # SAMPLES ARE INDEX
+        sample = self.data_samples[file_index]
+
+
+        return x, y, sample
+
+    def get_samples(self):
+        indexes = np.sort(self.set_indexes)
+        samples = (self.f['samples'][indexes]).astype(np.str_)
+
+        return samples
+
+class FoldDataset_forBigdataset(torch.utils.data.Dataset):
     # These variables are set in train.py
     dataset_file = None #path to h5py dataset file
     f = None # Dataset file handler (h5py.File in reading mode)
@@ -40,7 +91,10 @@ class FoldDataset(torch.utils.data.Dataset):
                          dtype=np.float32)
         """
         # Sample id
-        sample = (self.f['samples'][file_index]).astype(np.str_)
+        #sample = (self.f['samples'][file_index]).astype(np.str_)
+        # SAMPLES ARE INDEX
+        sample = np.array(index)
+
 
         return x, y, sample
 

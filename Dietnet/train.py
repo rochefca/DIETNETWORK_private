@@ -157,6 +157,20 @@ def main():
     # This tells what label to load in getitem
     du.FoldDataset.task_handler = task_handler
 
+    # OPTION TO LOAD ALL DATA TO CPU
+    data_start_time = time.time()
+    print('Loading all data to cpu')
+    print('Loading input features')
+    du.FoldDataset.data_x = np.array(du.FoldDataset.f['inputs'], dtype=np.int8)
+    print('Loading labels')
+    if du.FoldDataset.task_handler.name == 'regression':
+        du.FoldDataset.data_y = np.array(du.FoldDataset.f['regression_labels'], dtype=np.float32)
+    elif du.FoldDataset.task_handler.name == 'classification':
+        du.FoldDataset.data_y = np.array(du.FoldDataset.f['class_labels'][index], dtype=np.int64)
+    print('Loading samples')
+    du.FoldDataset.data_samples = np.array(fold_indices[0]+fold_indices[1]+fold_indices[2])
+    print('Loaded data in {} seconds'.format(time.time()-data_start_time))
+
     train_set = du.FoldDataset(fold_indices[0])
     valid_set = du.FoldDataset(fold_indices[1])
     test_set = du.FoldDataset(fold_indices[2])
@@ -299,8 +313,8 @@ def main():
 
         #  --- Train step ---
         model_handler.model.train()
-        train_step_start_time = time.time()
 
+        stime = time.time()
         train_results = mlu.train_step(model_handler,
                                        device,
                                        train_set,
@@ -308,9 +322,8 @@ def main():
                                        mus, sigmas, args.normalize, optimizer,
                                        results_fullpath, epoch)
 
-        # Monitoring time execution
-        train_step_time = time.time() - train_step_start_time
-        #print('Train step executed in {} seconds'.format(time.time()-train_step_start_time))
+        print('Train step time:', time.time()-stime)
+
 
         # --- Eval step ---
         model_handler.model.eval()
