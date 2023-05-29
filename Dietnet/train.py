@@ -69,7 +69,7 @@ def main():
     # Loading config
     # ---------------
     # Load hyperparameters from config file
-    # Config :
+    # Info in the config file:
     #   - batch_size
     #   - epochs
     #   - input_dropout
@@ -166,7 +166,7 @@ def main():
     if du.FoldDataset.task_handler.name == 'regression':
         du.FoldDataset.data_y = np.array(du.FoldDataset.f['regression_labels'], dtype=np.float32)
     elif du.FoldDataset.task_handler.name == 'classification':
-        du.FoldDataset.data_y = np.array(du.FoldDataset.f['class_labels'][index], dtype=np.int64)
+        du.FoldDataset.data_y = np.array(du.FoldDataset.f['class_labels'], dtype=np.int64)
     print('Loading samples')
     du.FoldDataset.data_samples = np.array(fold_indices[0]+fold_indices[1]+fold_indices[2])
     print('Loaded data in {} seconds'.format(time.time()-data_start_time))
@@ -204,7 +204,7 @@ def main():
 
     # Optimizer
     lr = config['learning_rate']
-    optimizer = torch.optim.Adam(model_handler.get_parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model_handler.model.parameters(), lr=lr)
 
 
     # ----------------------------------------
@@ -416,7 +416,7 @@ def main():
             'patience':patience},
             lastmodel_fullpath)
 
-        print('Epoch execution time: {} secondsi\n'.format(
+        print('Epoch execution time: {} seconds\n'.format(
               time.time() - epoch_start_time))
 
         # Check early stopping
