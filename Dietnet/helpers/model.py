@@ -206,7 +206,7 @@ class MainNetwork(nn.Module):
 
 class DietNetwork(nn.Module):
     def __init__(self, fold, emb_filename, device,
-                 dataset_filename, config, param_init,
+                 dataset_filename, config, task, param_init,
                  input_dropout=0., eps=1e-5, incl_bias=True, incl_softmax=False):
         super(DietNetwork, self).__init__()
 
@@ -256,10 +256,10 @@ class DietNetwork(nn.Module):
         n_feats = emb.size()[0]
 
         # Main Network output size (nb targets)
-        with h5py.File(dataset_filename, 'r') as f:
-            if 'regression_labels' in f.keys():
-                n_targets = 1
-            else:
+        if task == 'regression':
+            n_targets = 1
+        elif task == 'classification':
+            with h5py.File(dataset_filename, 'r') as f:
                 n_targets = len(f['class_label_names'])
 
         # Instantiate main network

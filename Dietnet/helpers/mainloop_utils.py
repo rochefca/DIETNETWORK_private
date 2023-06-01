@@ -11,19 +11,21 @@ from helpers import model
 from helpers import dataset_utils as du
 
 
-def train_step(mod_handler, device, train_generator,
+def train_step(mod_handler, device, train_dataset, train_generator,
                mus, sigmas, normalize, optimizer, results_fullpath, epoch):
 
     task_handler = mod_handler.task_handler
 
-    # Remove batch results from previous epoch
-    task_handler.zero_batch_results()
+    # Reset to 0 batches results from previous epoch
+    task_handler.init_batches_results(train_dataset, train_generator)
 
-    # Looping through batches
+    # Batch start pos (to compile samples and labels)
+    bstart = 0
     for batch, (x_batch, y_batch, samples) in enumerate(train_generator):
-        # Append batch samples and labels
-        task_handler.compile_samples(samples)
-        task_handler.compile_labels(y_batch)
+        # Compile batch samples and labels
+        bend = bstart + len(samples) # batch end pos
+        task_handler.batches_results['samples'][bstart:bend] = samples
+        task_handler.batches_results['ys'][bstart:bend] = y_batch
 
         # Send data to device
         x_batch, y_batch = x_batch.to(device), y_batch.to(device)
@@ -42,7 +44,7 @@ def train_step(mod_handler, device, train_generator,
         optimizer.zero_grad()
 
         # Forward pass
-        model_out = mod_handler.forward(x_batch, results_fullpath,
+        model_out = mod_handler.model.forward(x_batch, results_fullpath,
                                         epoch, batch, 'train')
 
         # Loss
@@ -54,31 +56,38 @@ def train_step(mod_handler, device, train_generator,
         # Optimize
         optimizer.step()
 
-        # Batch sum loss (to account for unequal batches)
-        sum_loss = task_handler.get_sum_loss(loss, y_batch)
+        # Loss summed over all outputs (by default Pytorch returns mean loss
+        # computed over nb of outputs)
+        loss_wo_reduction = loss.item()*len(y_batch)
 
-        # Append sum loss to batch results
-        task_handler.batches_results['losses'] = np.append(
-                task_handler.batches_results['losses'], sum_loss)
+        # Compile batch loss wo reduction
+        task_handler.batches_results['losses_wo_reduction'][batch] = \
+                loss_wo_reduction
 
-        # Append other batch results (ex: pred accuracy in classification)
-        task_handler.get_batch_results(model_out, y_batch)
+        # Compile batch predictions
+        task_handler.update_batches_preds(model_out, y_batch, bstart, bend, batch)
+
+        # Update batch start pos
+        bstart = bend
 
     return task_handler.batches_results.copy()
 
 
-def eval_step(mod_handler, device, valid_generator,
+def eval_step(mod_handler, device, eval_dataset, valid_generator,
               mus, sigmas, normalize, results_fullpath, epoch):
 
     task_handler = mod_handler.task_handler
 
-    # Remove batch results of previous epoch
-    task_handler.zero_batch_results() # reset batch result
+    # Reset to 0 batches results from previous epoch
+    task_handler.init_batches_results(eval_dataset, valid_generator)
 
+    # Batch start pos (to compile samples and labels)
+    bstart = 0
     for batch, (x_batch, y_batch, samples) in enumerate(valid_generator):
-        # Append batch samples and labels
-        task_handler.compile_samples(samples)
-        task_handler.compile_labels(y_batch)
+        # Compile batch samples and labels
+        bend = bstart + len(samples) # batch end pos
+        task_handler.batches_results['samples'][bstart:bend] = samples
+        task_handler.batches_results['ys'][bstart:bend] = y_batch
 
         # Send data to device
         x_batch, y_batch = x_batch.to(device), y_batch.to(device)
@@ -94,102 +103,27 @@ def eval_step(mod_handler, device, valid_generator,
             x_batch = du.normalize(x_batch, mus, sigmas)
 
         # Forward pass
-        model_out = mod_handler.forward(x_batch, results_fullpath,
+        model_out = mod_handler.model.forward(x_batch, results_fullpath,
                                         epoch, batch, 'valid')
-
         # Loss
         loss = task_handler.compute_loss(model_out, y_batch)
 
-        # Batch sum loss (to account for unequal minibatches)
-        sum_loss = task_handler.get_sum_loss(loss, y_batch)
+        # Loss summed over all outputs (by default Pytorch returns mean loss
+        # computed over nb of outputs)
+        loss_wo_reduction = loss.item()*len(y_batch)
 
-        # Append sum loss to batch results
-        task_handler.batches_results['losses'] = np.append(
-                task_handler.batches_results['losses'], sum_loss)
+        # Compile batch loss wo reduction
+        task_handler.batches_results['losses_wo_reduction'][batch] = \
+                loss_wo_reduction
 
-        # Append other batch results (ex: pred accuracy in classification)
-        task_handler.get_batch_results(model_out, y_batch)
+        # Compile batch predictions
+        task_handler.update_batches_preds(model_out, y_batch, bstart, bend, batch)
 
-        # TO DO :
-        #elif task == 'regression':
-        #    test_pred = torch.cat((test_pred,comb_model_out.detach()), dim=0)
+        # Update batch start pos
+        bstart = bend
 
     return task_handler.batches_results.copy()
 
-"""
-def test_step(mod_handler, device, test_generator,
-        set_size, criterion, mus, sigmas, task, normalize):
-    # Saving data seen while looping through minibatches
-    minibatch_loss = []
-    minibatch_n_right = [] #number of good classifications
-    test_pred = torch.tensor([]).to(device) #prediction of each sample
-    test_score = torch.tensor([]).to(device) #softmax values of each sample
-    test_samples = np.array([]) #test samples
-    test_ys = np.array([]) #true labels of test samples
-
-    for i, (x_batch, y_batch, samples) in enumerate(test_generator):
-        # Save samples
-        test_samples = np.concatenate([test_samples, samples])
-        # Save labels
-        test_ys = np.concatenate([test_ys, y_batch])
-
-        # Send data to device
-        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
-        x_batch = x_batch.float()
-
-        if task == 'regression':
-            y_batch = y_batch.unsqueeze(1)
-
-        # Replace missing values
-        du.replace_missing_values(x_batch, mus)
-
-        # Normalize
-        if normalize:
-            x_batch = du.normalize(x_batch, mus, sigmas)
-
-        # Forward pass
-        model_out = mod_handler.forward(x_batch)
-
-        # Loss
-        loss = criterion(model_out, y_batch)
-
-        # Monitoring : Minibatch
-        weighted_loss = loss.item()*len(y_batch) # for unequal minibatches
-        minibatch_loss.append(weighted_loss)
-
-        # Predictions
-        if task == 'classification':
-            score, pred = get_predictions(model_out)
-            test_pred = torch.cat((test_pred,pred), dim=-1)
-            test_score = torch.cat((test_score,score), dim=0)
-
-            # Nb of good classifications for the minibatch
-            minibatch_n_right.append(((y_batch - pred) == 0).sum().item())
-
-        elif task == 'regression':
-            test_pred = torch.cat((test_pred, model_out.detach()), dim=0)
-
-    test_loss = np.array(minibatch_loss).sum()/set_size
-    #test_loss = np.array(minibatch_loss).mean()
-
-    # Test results to return
-    if task == 'classification':
-        # Total accuracy
-        test_acc = np.array(minibatch_n_right).sum() / float(set_size)*100
-
-        test_results = (test_score, test_pred, test_acc)
-
-    elif task == 'regression':
-        # Pearson correlation coefficient
-        print('Computing Pearson correlation coefficient', flush=True)
-        r = compute_correlation(
-                test_pred,
-                torch.from_numpy(test_ys).to(device).unsqueeze(1)
-                )
-        test_results = (test_loss, test_pred, r)
-
-    return test_samples, test_ys, test_results
-"""
 
 def get_last_layers(comb_model, device, test_generator, set_size,
                     mus, sigmas, emb, task):
@@ -247,232 +181,6 @@ def get_last_layers(comb_model, device, test_generator, set_size,
 
 
 
-def get_predictions(model_output):
-    with torch.no_grad():
-        score = F.softmax(model_output, dim=1)
-        _, pred = torch.max(score, dim=1)
-
-    return score, pred
-
-
-def compute_correlation_np(x, y):
-    # Pearson's r : SUM[(xi - xmean)(yi-ymean)] / SQRT[SUM[(xi-xmean)^2]*SUM[(yi-ymean)^2]]
-    vx = x - np.mean(x)
-    vy = y - np.mean(y)
-
-    r = np.sum(vx*vy) / (np.sqrt(np.sum(vx**2)) * np.sqrt(np.sum(vy**2)))
-    return r
-
-
-def compute_correlation(x, y):
-    # Pearson's r : SUM[(xi - xmean)(yi-ymean)] / SQRT[SUM[(xi-xmean)^2]*SUM[(yi-ymean)^2]]
-    with torch.no_grad():
-        vx = x - torch.mean(x)
-        vy = y - torch.mean(y)
-
-        r = torch.sum(vx*vy) / (torch.sqrt(torch.sum(vx**2)) * torch.sqrt(torch.sum(vy**2)))
-
-    return r.item()
-
-
-def has_improved(best_result, actual_result):
-    # Classification
-    if len(best_result) == 2:
-        # Improvement if actual acc is greater than best acheived acc
-        if actual_result[1] > best_result[1]:
-            return True
-        # Improvement if acc is same as best acc and loss is min loss achieve
-        if actual_result[1] == best_result[1] and actual_result[0] < best_result[0]:
-            return True
-
-        # No improvement
-        return False
-
-    # Regression
-    elif len(best_result) == 1:
-        # Improvement if loss is min loss achieve
-        if actual_result[0] < best_result[0]:
-            return True
-
-        # No improvement
-        return False
-
-
-def update_best_result(best_result, actual_result):
-    # Classification
-    if len(best_result) == 2:
-        # Accuracy
-        if actual_result[1] > best_result[1]:
-            updated_acc = actual_result[1]
-        else:
-            updated_acc = best_result[1]
-
-        # Loss
-        if actual_result[0] < best_result[0]:
-            updated_loss = actual_result[0]
-        else:
-            updated_loss = best_result[0]
-
-        return (updated_loss, updated_acc)
-
-    # Regression
-    if len(best_result) == 1:
-        # Loss
-        if actual_result[0] < best_result[0]:
-            updated_loss = actual_result[0]
-        else:
-            updated_loss = best_result[0]
-            print('Warning with updated loss')
-
-        return (updated_loss,)
-
-
-def has_improved_old(best_acc, actual_acc, min_loss, actual_loss):
-    if actual_acc > best_acc:
-        return True
-    if actual_acc == best_acc and actual_loss < min_loss:
-        return True
-
-    return False
-
-
-def train_step_mlp(mlp, device, optimizer, train_generator, set_size,
-                   criterion, mus, sigmas, task):
-    # Monitoring : Minibatch setup
-    minibatch_loss = []
-    minibatch_n_right = [] # nb of good classifications
-
-    for x_batch, y_batch, _ in train_generator:
-        # Send data to device
-        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
-        x_batch.float()
-
-        # Replace missing values
-        du.replace_missing_values(x_batch, mus)
-
-        # Normalize
-        x_batch = du.normalize(x_batch, mus, sigmas)
-
-        # Reset optimizer
-        optimizer.zero_grad()
-
-        # Forward pass
-        mlp_out = mlp(x_batch)
-
-        # Get prediction
-        if task == 'classification':
-            # Softmax computation
-            _, pred = get_predictions(mlp_out)
-
-        # Compute loss (softmax computation done in loss if classification)
-        loss = criterion(mlp_out, y_batch)
-
-        # Compute gradients
-        loss.backward()
-
-        # Optimize
-        optimizer.step()
-
-        # Monitoring : Minibatch
-        minibatch_loss.append(loss.item()) # mean loss of the minibatch
-        if task == 'classification':
-            minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
-
-    # Monitoring: Epoch
-    epoch_loss = np.array(minibatch_loss).mean()
-    epoch_acc = 0.0
-    if task == 'classification':
-        epoch_acc = np.array(minibatch_n_right).sum() / float(set_size)*100
-
-    return epoch_loss, epoch_acc
-
-
-def eval_step_mlp(mlp, device, valid_generator, set_size,
-                  criterion, mus, sigmas, task):
-    # Monitoring: Minibatch setup
-    minibatch_loss = []
-    minibatch_n_right = [] # nb of good classifications
-
-    for x_batch, y_batch, _ in valid_generator:
-        # Send data to device
-        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
-        x_batch = x_batch.float()
-
-        # Replace missing values
-        du.replace_missing_values(x_batch, mus)
-
-        # Normalize
-        x_batch = du.normalize(x_batch, mus, sigmas)
-
-        # Forward pass
-        mlp_out = mlp(x_batch)
-
-        # Predictions
-        if task == 'classification':
-            _, pred = get_predictions(mlp_out)
-
-        # Loss
-        loss = criterion(mlp_out, y_batch)
-
-        # Monitoring : Minibatch
-        weighted_loss = loss.item()*len(y_batch) # for unequal minibatches
-        minibatch_loss.append(weighted_loss)
-        if task == 'classification':
-            minibatch_n_right.append(((y_batch - pred) ==0).sum().item())
-
-    epoch_loss = np.array(minibatch_loss).sum()/set_size
-    epoch_acc = 0.0
-    if task == 'classification':
-        epoch_acc = np.array(minibatch_n_right).sum() / float(set_size)*100
-
-    return epoch_loss, epoch_acc
-
-def test_step_mlp(mlp, device, test_generator, set_size,
-              mus, sigmas, task):
-    # Saving data seen while looping through minibatches
-    minibatch_n_right = [] #number of good classifications
-    test_pred = torch.tensor([]).to(device) #prediction of each sample
-    test_score = torch.tensor([]).to(device) #softmax values of each sample
-    test_samples = np.array([]) #test samples
-    test_ys = np.array([]) #true labels of test samples
-
-    for i, (x_batch, y_batch, samples) in enumerate(test_generator):
-        # Save samples
-        test_samples = np.concatenate([test_samples, samples])
-        # Save labels
-        test_ys = np.concatenate([test_ys, y_batch])
-
-        # Send data to device
-        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
-        x_batch = x_batch.float()
-
-        # Replace missing values
-        du.replace_missing_values(x_batch, mus)
-
-        # Normalize
-        x_batch = du.normalize(x_batch, mus, sigmas)
-
-        # Forward pass
-        mlp_out = mlp(x_batch)
-
-        # Predictions
-        if task == 'classification':
-            score, pred = get_predictions(mlp_out)
-            test_pred = torch.cat((test_pred,pred), dim=-1)
-            test_score = torch.cat((test_score,score), dim=0)
-
-            # Nb of good classifications for the minibatch
-            minibatch_n_right.append(((y_batch - pred) == 0).sum().item())
-
-        elif task == 'regression':
-            test_pred = torch.cat((test_pred,mlp_out), dim=-1)
-
-    # Total accuracy
-    test_acc = 0.0
-    if task == 'classification':
-        test_acc = np.array(minibatch_n_right).sum() / float(set_size)*100
-
-    return test_samples, test_ys, test_score, test_pred, test_acc
 
 
 def create_disc_model(comb_model, emb, device):
@@ -639,45 +347,3 @@ def load_theano_model(n_feats_emb, emb_n_hidden_u, discrim_n_hidden1_u, discrim_
                                                       incl_softmax=True) # Theano includes softmax in model
 
     return model_to_return
-
-
-def load_model(model_path,
-               emb,
-               device,
-               n_feats,
-               n_hidden_u_aux,
-               n_hidden_u_main,
-               n_targets,
-               input_dropout,
-               incl_bias=True,
-               incl_softmax=False,
-               load_comb_model=False):
-    """
-    Load (discrim) model for test time / attribution computation
-    Set load_comb_model to True to load the combined model instead
-    """
-    comb_model = model.CombinedModel(
-        n_feats,
-        n_hidden_u_aux,
-        n_hidden_u_main,
-        n_targets,
-        param_init=None,
-        input_dropout=input_dropout,
-        incl_bias=incl_bias,
-        incl_softmax=incl_softmax)
-
-    comb_model.load_state_dict(torch.load(model_path))
-    comb_model.to(device)
-    comb_model = comb_model.eval()
-
-    if load_comb_model:
-        return comb_model
-
-    else:
-        #discrim_model = create_disc_model_multi_gpu(comb_model, emb, device, incl_softmax)
-        discrim_model = create_disc_model(comb_model, emb, device)
-
-        del comb_model
-        torch.cuda.empty_cache()
-
-        return discrim_model
