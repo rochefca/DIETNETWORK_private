@@ -17,9 +17,15 @@ class DietNetworkHandler():
         dn_model = model.DietNetwork(fold, emb_filename, device,
                                      dataset_filename, config,
                                      task_handler.name, param_init)
+        
+        # Make simple model
+        dn_model_attr = model.DietNetworkAttr(fold, emb_filename, device,
+                                              dataset_filename, config,
+                                              task_handler.name, param_init)
 
         #super(DietNetworkHandler, self).__init__(dn_model, task_handler)
         self.model = dn_model
+        self.model_attr = dn_model_attr
         self.task_handler = task_handler
 
 
@@ -41,6 +47,10 @@ class DietNetworkHandler():
                 + '_fold' + str(fold)
 
         return exp_identifier
+
+    def get_attribution_model(self):
+        # return model with frozen fatlayer weights
+        return self.model_attr
 
 
 class MlpHandler():
@@ -67,3 +77,6 @@ class MlpHandler():
                 + '_fold' + str(fold)
 
         return exp_identifier
+    
+    def get_attribution_model(self):
+        return self.model

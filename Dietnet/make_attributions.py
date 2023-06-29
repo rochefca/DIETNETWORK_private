@@ -15,6 +15,7 @@ except:
     # cannot load comet. Proceed...
     Experiment, Optimizer = None, None
 
+import copy
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -41,6 +42,7 @@ def make_baseline(mod_handler, dset, data_generator, mus, sigmas, device, normal
     task_handler.init_batches_results(dset, data_generator)
 
     full_dset = []
+    full_dset_raw = []
     bstart = 0
     for batch, (x_batch, y_batch, samples) in enumerate(data_generator):
         # Compile batch samples and labels
@@ -48,6 +50,7 @@ def make_baseline(mod_handler, dset, data_generator, mus, sigmas, device, normal
         task_handler.batches_results['samples'][bstart:bend] = samples
 
         # Send data to device
+        x_batch_orig = copy.deepcopy(x_batch)
         x_batch, y_batch = x_batch.to(device), y_batch.to(device)
         x_batch = x_batch.float()
 
@@ -58,9 +61,11 @@ def make_baseline(mod_handler, dset, data_generator, mus, sigmas, device, normal
         if normalize:
             x_batch = du.normalize(x_batch, mus, sigmas)
         full_dset.append(x_batch)
+        full_dset_raw.append(x_batch_orig)
     x_dset = torch.cat(full_dset)
+    full_dset_raw = torch.cat(full_dset_raw)
     baseline = x_dset.min(0).values.view(1,-1)
-    return x_dset, baseline
+    return full_dset_raw, baseline
 
 
 def main():
@@ -248,8 +253,8 @@ def main():
     results_fullpath = os.path.join(args.exp_path,
             args.exp_name, results_dirname)
 
-    lu.create_dir(results_fullpath)
-    print('Results will be saved to:', results_fullpath)
+    #lu.create_dir(results_fullpath)
+    #print('Results will be saved to:', results_fullpath)
 
     # Monitoring best and last models
     bestmodel_fullpath = os.path.join(results_fullpath, 'best_model.pt')
@@ -280,52 +285,29 @@ def main():
 
     model_handler.model.load_state_dict(checkpoint['model_state_dict'])
 
-    # Test step
-    model_handler.model.eval()
-    test_results = mlu.eval_step(model_handler,
-                                 device,
-                                 test_set,
-                                 test_generator,
-                                 mus, sigmas, args.normalize,
-                                 results_fullpath, 'test_step')
-
-    model_handler.task_handler.print_test_results(test_results)
-
-    # Save test results
-    test_filename = 'test_results_epoch'+str(checkpoint['epoch'])
-    test_fullpath = os.path.join(results_fullpath, test_filename)
-    model_handler.task_handler.save_predictions(
-            test_results, test_fullpath)
-
     # ----------------------------------------
     #               Attributions
     # ----------------------------------------
     out_dir = results_fullpath # to be consistent with the old code!
+    model_handler.model_attr.to(device) # send to device
 
     x_test, baseline = make_baseline(model_handler, test_set, test_generator, mus, sigmas, device, args.normalize)
 
     attr_manager = am.AttributionManager()
-
-    attr_manager.set_model(model_handler.model.main_net) # hack for now!
+    
+    attr_manager.set_model(model_handler.get_attribution_model())
     attr_manager.init_attribution_function(attr_type='int_grad', backend='captum')
     # attr_manager.init_attribution_function(attr_type='int_grad', backend='custom')
     attr_manager.set_data_generator(test_generator)
     attr_manager.set_genotypes_data(x_test)
     attr_manager.set_raw_attributions_file(os.path.join(out_dir, 'attrs.h5'))
     attr_manager.set_device(device)
-    
-    import pdb
-    pdb.set_trace()
-    #model_handler.model.main_net(x_test[:10,:])
-    #*** TypeError: forward() missing 5 required positional arguments: 'fatLayer_weights', 'results_fullpath', 'epoch', 'batch', and 'step'
-    #model_handler.model.main_net(x_test[:10,:], , '', 1, 1, 1)
 
     attr_manager.create_raw_attributions(False,
                                          only_true_labels=False,
                                          baselines=baseline,
                                          n_steps=100,
                                          method='riemann_left')
-    # TypeError: forward() missing 5 required positional arguments: 'fatLayer_weights', 'results_fullpath', 'epoch', 'batch', and 'step'
 
     out = attr_manager.get_attribution_average()
     with h5py.File(os.path.join(out_dir, 'attrs_avg.h5'), 'w') as hf:

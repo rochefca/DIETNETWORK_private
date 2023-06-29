@@ -241,8 +241,10 @@ class AttributionManager():
         expects self.data_generator.dataset to be of class dataset_utils.FoldDataset
         """
         n_categories = self.data_generator.dataset.data_y.max().item()+1
-        n_samples = self.data_generator.dataset.data_x.shape[0]
-        n_feats = self.data_generator.dataset.data_x.shape[1]
+        #n_samples = self.data_generator.dataset.data_x.shape[0] # wrong size
+        #n_feats = self.data_generator.dataset.data_x.shape[1]
+        n_samples = self.genotypes_data.shape[0]
+        n_feats = self.genotypes_data.shape[1]
         return n_categories, n_samples, n_feats
 
     def get_attribution_average(self, use_true_class_only=False):

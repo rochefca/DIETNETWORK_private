@@ -759,20 +759,6 @@ def train(config, comet_log, comet_project_name, optimization_exp):
             lu.save_results_regression(config['specifics']['out_dir'],
                     test_samples, test_ys, test_results[1].detach().squeeze().cpu())
 
-        # Save additional data (additional_data.npz)
-        #print('saving additional results', flush=True)
-        """
-        train_samples = train_set.get_samples()
-        valid_samples = valid_set.get_samples()
-        with h5py.File(dataset_file, 'r') as f:
-            snp_names = np.array(f['snp_names']).astype(np.str_)
-
-        lu.save_additional_data(config['specifics']['out_dir'],
-                                train_samples, valid_samples, test_samples,
-                                test_ys, pred.cpu(), score.cpu(),
-                                label_names, snp_names, mus.cpu(), sigmas.cpu())
-        """
-
         print('\n--- End of execution ---')
         print('Executed training process in {} seconds'.format(
             time.time() - whole_exp_start_time))

@@ -293,6 +293,34 @@ class DietNetwork(nn.Module):
         print(self.fatLayer_weights.size())
         print(self.main_net.hidden_layers)
 
+        
+class DietNetworkAttr(DietNetwork):
+    def __init__(self, fold, emb_filename, device,
+                 dataset_filename, config, task, param_init,
+                 input_dropout=0., eps=1e-5, incl_bias=True, incl_softmax=False):
+        super(DietNetworkAttr, self).__init__(fold, emb_filename, device, dataset_filename, config, task, param_init, input_dropout, eps, incl_bias, incl_softmax)
+        self.results_fullpath = 'Dummy'
+
+    def forward(self, x_batch):
+        # Forward pass in auxilliary net
+        aux_net_out = self.aux_net(self.embedding, self.results_fullpath,
+                                   1, 1, 1, save_weights=False)
+
+        # Forward pass in discrim net
+        self.fatLayer_weights = torch.transpose(aux_net_out,1,0)
+        main_net_out = self.main_net(x_batch, self.fatLayer_weights,
+                                     self.results_fullpath,
+                                     1, 1, 1, False)
+
+        return main_net_out
+
+
+    def save_parameters(self, filename):
+        print(self.aux_net.hidden_layers)
+        print(self.fatLayer_weights.size())
+        print(self.main_net.hidden_layers)
+
+
 
 class Mlp(nn.Module):
     def __init__(self, task_handler, dataset_filename, config, input_dropout=0., eps=1e-5):
