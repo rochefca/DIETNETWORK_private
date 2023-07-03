@@ -188,6 +188,7 @@ def main():
     print('\n---\nInitializing model')
 
     # Model architecture (Dietnet or Mlp)
+    # (optmizers are created in the model class)
     if args.model == 'Dietnet':
         model_handler = DietNetworkHandler(task_handler, fold,
                 args.embedding, device, args.dataset, config, param_init)
@@ -201,10 +202,6 @@ def main():
     model_handler.model.to(device)
 
     print(model_handler.model)
-
-    # Optimizer
-    lr = config['learning_rate']
-    optimizer = torch.optim.Adam(model_handler.model.parameters(), lr=lr)
 
 
     # ----------------------------------------
@@ -319,7 +316,7 @@ def main():
                                        device,
                                        train_set,
                                        train_generator,
-                                       mus, sigmas, args.normalize, optimizer,
+                                       mus, sigmas, args.normalize,
                                        results_fullpath, epoch)
 
         print('Train step time:', time.time()-stime)
@@ -362,7 +359,7 @@ def main():
         #print('Eval step executed in {} seconds'.format(time.time()-eval_step_start_time))
 
         # Print epoch results
-        print('Train results:')
+        print('Train results:', flush=True)
         model_handler.task_handler.print_epoch_results(
                 train_results, valid_results)
         print('Monitored results:')
@@ -383,14 +380,14 @@ def main():
                 valid_results, valid_fullpath)
 
         # Anneal learning rate
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = \
-                param_group['lr']*config['learning_rate_annealing']
+        for optimizer in model_handler.model.get_optimizers():
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = \
+                    param_group['lr']*config['learning_rate_annealing']
 
-        # Print new LR
-        for param_group in optimizer.param_groups:
-            print('LR:', param_group['lr'])
-
+            # Print new LR
+            for param_group in optimizer.param_groups:
+                print('New (annealed) LR:', param_group['lr'])
 
         # Check model improvement and update best results
         has_improved = model_handler.task_handler.update_best_results(

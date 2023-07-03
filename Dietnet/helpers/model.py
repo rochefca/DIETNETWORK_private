@@ -264,6 +264,20 @@ class DietNetwork(nn.Module):
 
         # Instantiate main network
         self.main_net = MainNetwork(n_feats, n_targets, config, param_init)
+        
+        # ----------------------------------------
+        #               OPTIMIZERS
+        # ----------------------------------------
+        # Optimizer for auxiliary net
+        self.aux_net.optimizer = torch.optim.Adam(
+            self.aux_net.parameters(),
+            lr=config['lr_aux'])
+        
+        # Optimizer for main net
+        self.main_net.optimizer = torch.optim.Adam(
+            self.main_net.parameters(),
+            lr=config['lr_main']
+        )
 
 
     def forward(self, x_batch, results_fullpath,
@@ -288,6 +302,10 @@ class DietNetwork(nn.Module):
         return main_net_out
 
 
+    def get_optimizers(self):
+        return self.aux_net.optimizer, self.main_net.optimizer
+    
+    
     def save_parameters(self, filename):
         print(self.aux_net.hidden_layers)
         print(self.fatLayer_weights.size())
@@ -317,10 +335,10 @@ class Mlp(nn.Module):
         self.input_dropout = nn.Dropout(p=input_dropout)
 
         # Dropout
-        self.dropout = nn.Dropout(config['dropout'])
+        self.dropout = nn.Dropout(config['dropout_main'])
 
         # Layers definition
-        n_hidden_u = config['nb_hidden_u'] # nb of hidden units per layer
+        n_hidden_u = config['nb_hidden_u_main'] # nb of hidden units per layer
         for i in range(len(n_hidden_u)):
             # First layer
             if i == 0:
@@ -353,8 +371,16 @@ class Mlp(nn.Module):
         # Output layer
         nn.init.zeros_(self.out.bias)
 
+        # ----------------------------------------
+        #               OPTIMIZER
+        # ----------------------------------------
+        # Optimizer 
+        self.optimizer = torch.optim.Adam(
+            self.parameters(),
+            lr=config['lr_main'])
 
-    def forward(self, x):
+    
+    def forward(self, x, results_fullpath, epoch, batch, step):
         x = self.input_dropout(x)
 
         next_input = x
@@ -369,3 +395,12 @@ class Mlp(nn.Module):
         out = self.out(next_input)
 
         return out
+    
+    
+    def get_optimizers(self):
+        # We return the optimizer in a list because 
+        # in train step we iterate over optimizers 
+        # (because the DN model has more than one
+        # optimizer, since the aux and main nets have
+        # different lr)
+        return [self.optimizer]

@@ -137,8 +137,8 @@ class ClassificationHandler():
 
 
     def resume_best_results(self, results):
-        self.best_results['mean_loss'] = results['mean_loss']
-        self.best_results['mean_acc'] = results['mean_acc']
+        self.best_epoch_results['mean_loss'] = results['mean_loss']
+        self.best_epoch_results['mean_acc'] = results['mean_acc']
 
 
     def update_best_results(self, results):
@@ -282,7 +282,7 @@ class RegressionHandler():
 
 
     def resume_best_results(self, results):
-        self.best_results['mean_loss'] = results['mean_loss']
+        self.best_epoch_results['mean_loss'] = results['mean_loss']
 
 
     def update_best_results(self, results):

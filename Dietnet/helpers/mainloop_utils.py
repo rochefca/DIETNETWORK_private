@@ -12,7 +12,7 @@ from helpers import dataset_utils as du
 
 
 def train_step(mod_handler, device, train_dataset, train_generator,
-               mus, sigmas, normalize, optimizer, results_fullpath, epoch):
+               mus, sigmas, normalize, results_fullpath, epoch):
 
     task_handler = mod_handler.task_handler
 
@@ -41,7 +41,9 @@ def train_step(mod_handler, device, train_dataset, train_generator,
             x_batch = du.normalize(x_batch, mus, sigmas)
 
         # Reset optimizer
-        optimizer.zero_grad()
+        optimizers = mod_handler.model.get_optimizers()
+        for optimizer in optimizers:
+            optimizer.zero_grad()
 
         # Forward pass
         model_out = mod_handler.model.forward(x_batch, results_fullpath,
@@ -54,7 +56,8 @@ def train_step(mod_handler, device, train_dataset, train_generator,
         loss.backward()
 
         # Optimize
-        optimizer.step()
+        for optimizer in optimizers:
+            optimizer.step()
 
         # Loss summed over all outputs (by default Pytorch returns mean loss
         # computed over nb of outputs)
