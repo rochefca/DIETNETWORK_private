@@ -17,11 +17,18 @@ class DietNetworkHandler():
         dn_model = model.DietNetwork(fold, emb_filename, device,
                                      dataset_filename, config,
                                      task_handler.name, param_init)
+        
+        # store what is needed to make simple model
+        self.fold = fold
+        self.emb_filename = emb_filename
+        self.device = device
+        self.dataset_filename = dataset_filename
+        self.config = config
+        self.task_handler = task_handler
+        self.param_init = param_init
 
         #super(DietNetworkHandler, self).__init__(dn_model, task_handler)
         self.model = dn_model
-        self.task_handler = task_handler
-
 
     def get_exp_identifier(self, config, fold):
         exp_identifier =  self.task_handler.name \
@@ -41,6 +48,14 @@ class DietNetworkHandler():
                 + '_fold' + str(fold)
 
         return exp_identifier
+
+    def get_attribution_model(self):
+        # Make simple model
+        dn_model_attr = model.DietNetworkAttr(self.fold, self.emb_filename, self.device,
+                                              self.dataset_filename, self.config,
+                                              self.task_handler.name, self.param_init)
+        self.model_attr = dn_model_attr
+        return self.model_attr
 
 
 class MlpHandler():
@@ -67,3 +82,6 @@ class MlpHandler():
                 + '_fold' + str(fold)
 
         return exp_identifier
+    
+    def get_attribution_model(self):
+        return self.model
