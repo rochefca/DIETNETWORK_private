@@ -105,18 +105,26 @@ class FoldDataset_forBigdataset(torch.utils.data.Dataset):
         return samples
 
 
-class ExternalTestDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset_file):
-        self.dataset = h5py.File(dataset_file, 'r')
+class IndepTestDataset(torch.utils.data.Dataset):
+    
+    # These variables are set in test_independent_dataset.py
+    dataset_file = None # path to h5py dataset file
+    f = None # Dataset file handler (h5py.File in reading mode)
+    task_handler = None # Classification or regression
+    data_x = None
+
+    def __init__(self, samples):
+        self.set_indexes = np.arange(len(samples))
 
     def __len__(self):
-        return len(self.dataset['samples'])
+        return len(self.set_indexes)
 
     def __getitem__(self, index):
-        x = np.array(self.dataset['inputs'][index], dtype=np.int8)
-        sample = (self.dataset['samples'][index]).astype(np.str_)
+        # Input features
+        #x = np.array(self.f['inputs'][file_index], dtype=np.int8)
+        x = self.data_x[index]
 
-        return x, sample
+        return index,x
 
 
 

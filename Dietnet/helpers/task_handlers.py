@@ -18,6 +18,15 @@ class ClassificationHandler():
         # ys:[...], scores:[...], n_right:[...], samples:[...] })
         self.batches_results = dict()
 
+        # Dict for saving results of each batch when we are
+        # testing the model in a dataset independant from the
+        # one used to train the model
+        # This dict is different because we don't have the labels
+        # of samples, so we only save the model predictions
+        # (we can't compute loss and n_right)
+        # Dict will be {scores:[...], preds:[...], samples=[...]}
+        self.indep_test_batches_results = dict()
+
         # Dict for remembering results of the best epoch obtained so far
         # {mean_loss = float, mean_acc = float}
         self.best_epoch_results = dict()
@@ -44,13 +53,20 @@ class ClassificationHandler():
 
 
     def init_batches_results(self, dataset, dataloader):
-        # Init the batch results with empty arrays
-        self.batches_results['losses_wo_reduction'] = np.zeros(len(dataloader))
-        self.batches_results['preds'] = np.zeros(len(dataset))
-        self.batches_results['scores'] = np.zeros((len(dataset), len(self.class_label_names)))
-        self.batches_results['n_right'] = np.zeros(len(dataloader))
-        self.batches_results['ys'] = np.zeros(len(dataset))
-        self.batches_results['samples'] = np.zeros(len(dataset))
+        # Init the batch results using arrays filled with -1
+        self.batches_results['losses_wo_reduction'] = np.ones(len(dataloader))*-1
+        self.batches_results['preds'] = np.ones(len(dataset))*-1
+        self.batches_results['scores'] = np.ones((len(dataset), len(self.class_label_names)))*-1
+        self.batches_results['n_right'] = np.ones(len(dataloader))*-1
+        self.batches_results['ys'] = np.ones(len(dataset))*-1
+        self.batches_results['samples'] = np.ones(len(dataset))*-1
+    
+    
+    def init_indep_test_batches_results(self, dataset, dataloader):
+        # Init the batch results using arrays filled with -1
+        self.batches_results['preds'] = np.ones(len(dataset))*-1
+        self.batches_results['scores'] = np.ones((len(dataset), len(self.class_label_names)))*-1
+        self.batches_results['samples'] = np.ones(len(dataset))*-1
 
 
     def update_batches_preds(self, model_out, y_batch, bstart, bend, batch):
@@ -67,6 +83,18 @@ class ClassificationHandler():
             # N_right : nb of samples with class correctly predicted
             n_right = ((y_batch.detach().cpu().numpy() - preds) == 0).sum()
             self.batches_results['n_right'][batch] = n_right
+    
+
+    def update_indep_test_batches_preds(self, model_out, bstart, bend, batch):
+        with torch.no_grad():
+            # Scores : 1 value per class
+            # (softmax = all values for a sample sum to 1)
+            scores = F.softmax(model_out, dim=1).detach().cpu().numpy()
+            self.batches_results['scores'][bstart:bend] = scores
+
+            # Pred : class prediction for each sample
+            preds = np.argmax(scores, axis=1)
+            self.batches_results['preds'][bstart:bend] = preds
 
 
     def print_baseline_results(self, baseline_results):
@@ -193,6 +221,15 @@ class RegressionHandler():
         # ys:[...], samples:[...] })
         self.batches_results = dict()
 
+        # Dict for saving results of each batch when we are
+        # testing the model in a dataset independant from the
+        # one used to train the model
+        # This dict is different because we don't have the labels
+        # of samples, so we only save the model predictions
+        # (we can't compute loss)
+        # Dict will be {preds:[...], samples:[...]}
+        self.indep_test_batches_results = dict()
+
         # Dict for remembering results of the best epoch obtained so far
         # {mean_loss = float}
         self.best_epoch_results = dict()
@@ -216,10 +253,16 @@ class RegressionHandler():
 
     def init_batches_results(self, dataset, dataloader):
         # Init the batch results with empty arrays
-        self.batches_results['losses_wo_reduction'] = np.zeros(len(dataloader))
-        self.batches_results['preds'] = np.zeros(len(dataset))
-        self.batches_results['ys'] = np.zeros(len(dataset))
-        self.batches_results['samples'] = np.zeros(len(dataset))
+        self.batches_results['losses_wo_reduction'] = np.ones(len(dataloader))*-1
+        self.batches_results['preds'] = np.ones(len(dataset))*-1
+        self.batches_results['ys'] = np.ones(len(dataset))*-1
+        self.batches_results['samples'] = np.ones(len(dataset))*-1
+
+
+    def init_indep_test_batches_results(self, dataset, dataloader):
+        # Init the batch results with empty arrays
+        self.batches_results['preds'] = np.ones(len(dataset))*-1
+        self.batches_results['samples'] = np.ones(len(dataset))*-1
 
 
     def update_batches_preds(self, model_out, y_batch, bstart, bend, batch):
@@ -227,7 +270,16 @@ class RegressionHandler():
         # .squeeze() makes the dim batch_size (1 array of all outputs)
         self.batches_results['preds'][bstart:bend] = \
                 model_out.detach().squeeze().cpu().numpy()
+    
 
+    def update_indep_test_batches_preds(self, model_out, bstart, bend, batch):
+        # Same as update_batches_preds() function below (it's using only the model outputs)
+        # The function below requires y_batch argument (to match how it's defined in
+        # the ClassificationHandler that uses y_batch to compute accuracy)
+        # Since the function in regressionHandler does not use the arg, we just pass
+        # None as value for that arg (because we don't have lables (ys) of samples
+        # in the indep_test data)
+        self.update_batches_preds(model_out, None, bstart, bend, batch)
 
     def print_baseline_results(self, baseline_results):
         # Nb of samples
