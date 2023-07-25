@@ -77,7 +77,7 @@ def train_step(mod_handler, device, train_dataset, train_generator,
 
 
 def eval_step(mod_handler, device, eval_dataset, valid_generator,
-              mus, sigmas, normalize, results_fullpath, epoch):
+              mus, sigmas, normalize, results_fullpath, epoch, scale=1.0):
 
     task_handler = mod_handler.task_handler
 
@@ -104,6 +104,8 @@ def eval_step(mod_handler, device, eval_dataset, valid_generator,
         # Normalize
         if normalize:
             x_batch = du.normalize(x_batch, mus, sigmas)
+        
+        x_batch = x_batch*scale
 
         # Forward pass
         model_out = mod_handler.model.forward(x_batch, results_fullpath,

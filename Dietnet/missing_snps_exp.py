@@ -157,13 +157,14 @@ def main():
     #------------------------------
     # Missing data simulation loop
     #------------------------------
-    miss_percent_list = [0.25]
+    miss_percent_list = [0.95]
     nb_feats = du.FoldDataset.data_x_original.shape[1]
     
     for miss_percent in miss_percent_list:
             # Nb of snps to remove
             group_size = int(math.floor(nb_feats)*miss_percent)
-            reverse_mask = False
+            scale = nb_feats / (nb_feats-group_size)
+            print('Scale:', scale)
             
             print('Nb of SNPs to remove:', group_size)
             
@@ -182,12 +183,14 @@ def main():
                 du.FoldDataset.data_x = du.FoldDataset.data_x_original.copy()
                 du.FoldDataset.data_x[:,snp_group] = -1
                 
+                """
                 print('Snp group:', snp_group)
                 
                 print('Original data:')
                 print(du.FoldDataset.data_x_original)
                 print('Data with missing injected:')
                 print(du.FoldDataset.data_x)
+                """
                 
                 # Data loader
                 test_generator = DataLoader(test_set,
@@ -203,19 +206,10 @@ def main():
                                              test_set,
                                              test_generator,
                                              mus, sigmas, args.normalize,
-                                             results_fullpath, 'test_step')
+                                             results_fullpath, 'test_step',
+                                             scale=scale)
                 
                 model_handler.task_handler.print_test_results(test_results)
-                
-                
-        
-            
-            
-            
-            
-            
-            
-            
     
     
 
