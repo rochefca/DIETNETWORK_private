@@ -94,7 +94,7 @@ def test():
     
         print('\nFinal matched genotypes: {} samples with test genotypes matched to {} train genotypes'.format(
                 matched_genotypes.shape[0], matched_genotypes.shape[1]))
-    
+
         du.IndepTestDataset.data_x = matched_genotypes
     
         # Saving the matched dataset
@@ -114,9 +114,6 @@ def test():
         du.IndepTestDataset.data_x = np.array(matched_f['inputs'], dtype=np.int8)
         scale = matched_f['scale'][0]
         print('scale:', scale)
-        
-        
-
 
     # ---------------------------------------------------------------
     #                 ---- INFO FROM TRAINING PHASE ----

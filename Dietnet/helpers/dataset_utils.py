@@ -46,8 +46,8 @@ class FoldDataset(torch.utils.data.Dataset):
         """
         # Sample id
         #sample = (self.f['samples'][file_index]).astype(np.str_)
-        # SAMPLES ARE INDEX
-        sample = self.data_samples[file_index]
+        # SAMPLES ARE INDEX in dataset file (hdf5)
+        sample = file_index
 
 
         return x, y, sample
