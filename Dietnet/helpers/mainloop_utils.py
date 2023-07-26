@@ -98,13 +98,14 @@ def eval_step(mod_handler, device, eval_dataset, valid_generator,
 
         y_batch = task_handler.format_ybatch(y_batch)
 
-        # Replace missing values
+        # Replace missing values : missing values (-1) become the SNP mean
         du.replace_missing_values(x_batch, mus)
 
-        # Normalize
+        # Normalize (missing values become 0, because we substract the mean)
         if normalize:
             x_batch = du.normalize(x_batch, mus, sigmas)
         
+        # The scaling does not affect missing values because they are 0
         x_batch = x_batch*scale
 
         # Forward pass

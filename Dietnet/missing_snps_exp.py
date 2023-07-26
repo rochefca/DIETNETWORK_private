@@ -1,5 +1,6 @@
 import argparse
 import math
+import os
 import pprint
 import yaml
 
@@ -157,40 +158,118 @@ def main():
     #------------------------------
     # Missing data simulation loop
     #------------------------------
-    miss_percent_list = [0.95]
+    print('\n---\nMissing data simulation\n')
+    
+    miss_percent_list = [0.1, 0.25, 0.5, 0.7, 0.8, 0.9, 0.95, 0.99]
     nb_feats = du.FoldDataset.data_x_original.shape[1]
     
+    # Total nb of exepriments : we want same nb of exeperiments for all
+    # miss_percent in miss_percent_list. First batch of experiments is based
+    # on the nb of snp_groups (created so that every snp is removed or kept
+    # once) and we add experiments to match the total nb of experiments
+    min_percent = min(miss_percent_list)
+    max_percent = max(miss_percent_list)
+    
+    # We divise the number of SNPs by the nb of snp_groups and ceiling
+    # this number because we will do an extra group with the remaining 
+    # never use SNPs and random reselected SNPs.
+    print('Nb snps in group min percent:', int(math.floor(nb_feats)*min_percent))
+    print('Nb snps in group max percent:', int(math.floor(nb_feats)*(1-max_percent)))
+    total_exp = max(
+        math.ceil(nb_feats/(int(math.floor(nb_feats)*min_percent))),
+        math.ceil(nb_feats/(int(math.floor(nb_feats)*(1-max_percent))))
+    )
+    
+    print('Total nb of experiments:', total_exp, '\n')
+    
+    # For saving data
+    if task == 'classification':
+        f_str = ""
+        for i in miss_percent_list:
+            f_str += '_'+str(i)
+        results_filename = 'missing_data_simulations'+f_str+'.txt'
+        results_file = os.path.join(args.results_path, results_filename)
+        f = open(results_file, 'w')
+        f.write('missing\taccuracy\n')
+    
+    
     for miss_percent in miss_percent_list:
-            # Nb of snps to remove
-            group_size = int(math.floor(nb_feats)*miss_percent)
-            scale = nb_feats / (nb_feats-group_size)
+            print('\n***')
+            print('% of missing:', miss_percent)
+            # Nb of snps to remove or to keep
+            # If the % of missing is <=50% we make groups of SNPs to remove
+            # If the % of missing is > 50% we make groups of SNPs to keep
+            # This ensure that every (or most) SNP is kept (or remove) at least once
+            if miss_percent > 0.5:
+                reverse_miss_percent = 1 - miss_percent
+                # How many SNPs to keep in a experiment
+                group_size = int(math.floor(nb_feats)*reverse_miss_percent)
+                # Scale is used to increase info of non-missing genotypes by a 
+                # factor = nb_snps/nb_non_missing_snps
+                scale = nb_feats / group_size
+                # If true, remove the SNPs, if False keep the SNPs
+                to_remove = False
+                
+            else:
+                # How many SNPs to remove in an experiment
+                group_size = int(math.floor(nb_feats)*miss_percent)
+                # Scale is used to increase info of non-missing genotypes by a 
+                # factor = nb_snps/nb_non_missing_snps
+                scale = nb_feats / (nb_feats-group_size)
+                # If true, remove the SNPs, if False keep the SNPs
+                to_remove = True
+            
             print('Scale:', scale)
             
-            print('Nb of SNPs to remove:', group_size)
-            
-            # Make the groups of SNPs to remove
+            # Make the groups of SNPs to remove or to keep
             snp_indices = np.arange(nb_feats)
             np.random.shuffle(snp_indices)
             
             # Drop last group because it will be of smaller size
+            all_snp_groups = [snp_indices[i:i + group_size] for i in range(0, len(snp_indices), group_size)]
+            last_snp_group = all_snp_groups[-1]
             snp_groups = [snp_indices[i:i + group_size] for i in range(0, len(snp_indices), group_size)][:-1]
-            print('Nb of groups:', len(snp_groups))
-            print('First group size:', len(snp_groups[0]))
-            print('Last group size:', len(snp_groups[-1]))
             
-            # Iterate over the groups to remove
+            print('\nNb of groups:', len(snp_groups))
+            print('First group size:', len(snp_groups[0]))
+            print('Last (complete) group size:', len(snp_groups[-1]))
+            
+            # Complete snp_groups to make equal nb of experiments for
+            # the different miss_percent
+            nb_exp_to_do = total_exp - len(snp_groups)
+            print('Last group size:', len(last_snp_group))
+            for i in range(0,nb_exp_to_do):
+                # Complete the last snp_group
+                if i == 0:
+                    # nb of snps to add to last_snp_group to make a complete group
+                    gr_len = group_size - len(last_snp_group)
+                    print('gr len:', gr_len)
+                    
+                    # Make sure we don't pick a snp that is already in last_snp_group
+                    snps_pick = list(set(snp_indices) - set(last_snp_group))
+                    gr = np.hstack(
+                        (last_snp_group,
+                        np.random.choice(snps_pick, size=gr_len, replace=False)))
+                
+                # Make a new snp_group
+                else:
+                    gr = np.random.choice(snp_indices, size=group_size, replace=False)
+            
+                snp_groups.append(gr)
+            
+            print('\n')
+            
+            # Iterate over snp_groups to remove SNPs and make test step in model
             for snp_group in snp_groups:
                 du.FoldDataset.data_x = du.FoldDataset.data_x_original.copy()
-                du.FoldDataset.data_x[:,snp_group] = -1
+                # Remove SNPs in snp_group
+                if to_remove:
+                    du.FoldDataset.data_x[:,snp_group] = -1
                 
-                """
-                print('Snp group:', snp_group)
-                
-                print('Original data:')
-                print(du.FoldDataset.data_x_original)
-                print('Data with missing injected:')
-                print(du.FoldDataset.data_x)
-                """
+                # Keep SNPs in snp_group (remove the rest)
+                else:
+                    snps_to_remove = list(set(snp_indices) - set(snp_group))
+                    du.FoldDataset.data_x[:,snps_to_remove] = -1
                 
                 # Data loader
                 test_generator = DataLoader(test_set,
@@ -200,16 +279,29 @@ def main():
                 
                 # Test step
                 model_handler.model.eval()
-                results_fullpath = '/lustre06/project/6065672/cam27/DIETNET_EXP/HEIGHT/SANDBOX_DEBUG/MISS_TEST'
                 test_results = mlu.eval_step(model_handler,
                                              device,
                                              test_set,
                                              test_generator,
                                              mus, sigmas, args.normalize,
-                                             results_fullpath, 'test_step',
+                                             args.results_path, 'test_step',
                                              scale=scale)
                 
                 model_handler.task_handler.print_test_results(test_results)
+                
+                # Save results
+                if task == 'classification':
+                    acc = test_results['n_right'].sum()/len(test_results['ys'])
+                    f.write(str(miss_percent)+'\t'+str(acc)+'\n')
+
+    print('---\n')
+            
+    # Where results are saved
+    if task == 'classification':
+        print('Results saved to', results_file)
+        f.close()
+                
+            
     
     
 
@@ -297,6 +389,13 @@ def parse_args():
             type=int,
             default=0,
             help='Which fold to train (1st fold is 0). Default: %(default)i'
+            )
+    
+    # Results path
+    parser.add_argument(
+            '--results-path',
+            required=True,
+            help='Where to save the results'
             )
     
     return parser.parse_args()
