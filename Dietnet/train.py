@@ -130,6 +130,8 @@ def main():
     indices_byfold = np.load(args.partition, allow_pickle=True)
     fold_indices = indices_byfold['folds_indexes'][fold]
 
+    # We are doing fake data
+    """
     # Input features statistics
     inp_feat_stats = np.load(args.input_features_stats)
 
@@ -147,7 +149,10 @@ def main():
     else:
         sigmas = None
         print('Loaded {} means of input features'.format(len(mus)))
-
+    """
+    mus = torch.zeros(4).float().to(device)
+    sigmas = torch.ones(4).float().to(device)
+    
     # TO DO
     param_init=None
 
@@ -157,6 +162,8 @@ def main():
     # This tells what label to load in getitem
     du.FoldDataset.task_handler = task_handler
 
+    # We are doing fake data
+    """
     # OPTION TO LOAD ALL DATA TO CPU
     data_start_time = time.time()
     print('Loading all data to cpu')
@@ -180,6 +187,36 @@ def main():
               len(train_set), len(valid_set), len(test_set)))
 
     print('---\n')
+    """
+    
+    # The fake data
+    data_x = torch.tensor([[0,0,0,1],
+                           [0,0,1,1],
+                           [0,1,1,1],
+                           [1,1,1,1],
+                           [2,1,0,2],
+                           [0,0,0,1],
+                           [0,0,1,1],
+                           [0,0,0,1],
+                           [0,0,1,1]], dtype=torch.float32)
+    
+    data_y = torch.tensor([0,1,1,2,2, 0,1, 0,1])
+    
+    data_samples = np.array([i for i in range(len(data_y))])
+    
+    du.FoldDataset.data_x = data_x
+    du.FoldDataset.data_y = data_y
+    du.FoldDataset.data_samples = data_samples
+    
+    
+    train_set = du.FoldDataset([0,1,2,3,4])
+    valid_set = du.FoldDataset([5,6])
+    test_set = du.FoldDataset([7,8])
+    
+    emb = torch.tensor([[0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+                        [0.9, 0.8, 0.7, 0.6, 0.5, 0.4],
+                        [0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+                        [0.2, 0.2, 0.2, 0.2, 0.2, 0.2]])
 
 
     # ----------------------------------------
@@ -202,6 +239,10 @@ def main():
     model_handler.model.to(device)
 
     print(model_handler.model)
+    
+    print('MODEL PARAMS at init:')
+    for p in model_handler.model.named_parameters():
+        print(p)
 
 
     # ----------------------------------------
@@ -224,7 +265,7 @@ def main():
 
     # Batch generators
     batch_size = config['batch_size']
-    train_generator = DataLoader(train_set, shuffle=True,
+    train_generator = DataLoader(train_set, shuffle=False,
             batch_size=batch_size, num_workers=0, drop_last=True)
 
     valid_generator = DataLoader(valid_set,
@@ -274,6 +315,14 @@ def main():
         model_handler.task_handler.print_baseline_results(baseline)
         print('Computed baseline in {} seconds'.format(
             time.time() - baseline_start_time))
+        
+        # Save baseline as best model (for now)
+        torch.save({'epoch': 0,
+                    'model_state_dict': model_handler.model.state_dict(),
+                    'best_results': model_handler.task_handler.best_epoch_results},
+                   bestmodel_fullpath)
+        print('Saving best model')
+
 
 
     # --- Resume training: load last model and results ----
@@ -334,6 +383,9 @@ def main():
         # Monitoring performance on train set (eval step with train set)
         train_monit_step_start_time = time.time()
 
+        # Removed the evaluated train results to keep same seed state as in previous
+        # implem that was only doing the train step (no evaluated train step)
+        """
         evaluated_train_results = mlu.eval_step(model_handler,
                                                 device,
                                                 train_set,
@@ -343,6 +395,7 @@ def main():
 
         train_monit_step_time = time.time() - train_monit_step_start_time
         #print('Train eval step executed in {} seconds'.format(time.time()-train_eval_step_start_time))
+        """
 
 
         # Monitoring performance on valid set (eval step with valid set)
@@ -362,11 +415,17 @@ def main():
         print('Train results:', flush=True)
         model_handler.task_handler.print_epoch_results(
                 train_results, valid_results)
+
+        # Removed this because we removed the evaluated train step above
+        """
         print('Monitored results:')
         model_handler.task_handler.print_epoch_results(
                 evaluated_train_results, valid_results)
+        """
+        
 
         # Write epoch predictions
+        """
         train_filename = 'train_results_epoch'+str(epoch+1)
         valid_filename = 'valid_results_epoch'+str(epoch+1)
 
@@ -378,6 +437,7 @@ def main():
 
         model_handler.task_handler.save_predictions(
                 valid_results, valid_fullpath)
+        """
 
         # Anneal learning rate
         for optimizer in model_handler.model.get_optimizers():

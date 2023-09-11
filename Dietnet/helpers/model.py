@@ -9,13 +9,19 @@ import torch.nn.functional as F
 
 from helpers.task_handlers import ClassificationHandler, RegressionHandler
 
+import sys
+
 
 class AuxiliaryNetwork(nn.Module):
     def __init__(self, n_feats_emb, config, param_init):
         super(AuxiliaryNetwork, self).__init__()
+        
+        print('MAKING AUX NET')
+        print('just random numbers:', np.random.rand(5))
 
         # Hidden layers : self.hidden layers
         nb_hidden_u = config['nb_hidden_u_aux']
+        uniform_init_limit = config['uniform_init_limit']
         self.hidden_layers = []
         for i in range(len(nb_hidden_u)):
             # First layer
@@ -23,13 +29,16 @@ class AuxiliaryNetwork(nn.Module):
                 self.hidden_layers.append(
                         nn.Linear(n_feats_emb, nb_hidden_u[i], bias=False)
                         )
+                nn.init.uniform_(self.hidden_layers[-1].weight, a=-uniform_init_limit, b=uniform_init_limit)
             else:
                 self.hidden_layers.append(
                         nn.Linear(nb_hidden_u[i-1], nb_hidden_u[i], bias=False)
                         )
+                nn.init.uniform_(self.hidden_layers[-1].weight, a=-uniform_init_limit, b=uniform_init_limit)
+
         self.hidden_layers = nn.ModuleList(self.hidden_layers)
 
-        # Parameters initialization
+        # Parameters initialization with given values
         if param_init is not None and len(self.hidden_layers)==2:
             print('Initializing auxiliary network with weights from Theano')
 
@@ -42,15 +51,23 @@ class AuxiliaryNetwork(nn.Module):
             self.hidden_layers[1].weight = torch.nn.Parameter(
                     torch.from_numpy(params['w2_aux']))
 
+        """
         else:
             uniform_init_limit = config['uniform_init_limit']
             for layer in self.hidden_layers:
                 nn.init.uniform_(layer.weight, a=-uniform_init_limit, b=uniform_init_limit)
+        """
+            
+        # Printing the weights
+        for i,l in enumerate(self.hidden_layers):
+            print('AUX NET WEIGHTS {}: {}'.format(i, l.weight))
+            print('AUX NET BIAS {}: {}'.format(i, l.bias))
 
 
     def forward(self, x, results_fullpath, epoch, batch, step, save_weights):
         for i,layer in enumerate(self.hidden_layers):
             # Save layer params
+            """
             if ((batch == 0) and (step == 'valid')):
                 # Save layer weights
                 filename = 'auxLayer_'+str(i)+'_weights_epoch'+str(epoch)+'_batch'+str(batch)
@@ -64,10 +81,14 @@ class AuxiliaryNetwork(nn.Module):
                 else:
                     np.savez(os.path.join(results_fullpath, filename),
                              bias=np.array([]))
+            """
             # Forward pass
             ze = layer(x)
             ae = torch.tanh(ze)
             x = ae
+        
+        print('AUX OUT:')
+        print(ae)
 
         return ae
 
@@ -79,9 +100,11 @@ class MainNetwork(nn.Module):
     Uses F.linear with passed weights instead
     """
     def __init__(self, n_feats, n_targets, config, param_init,
-                 input_dropout=0., eps=1e-5, incl_bias=True, incl_softmax=False):
+                 eps=1e-5, incl_bias=True, incl_softmax=False):
         super(MainNetwork, self).__init__()
 
+        print('MAKING MAIN NET')
+        
         self.hidden_layers = []
         self.bn_fatLayer = None
         self.bn = [] # batch normalization
@@ -89,25 +112,38 @@ class MainNetwork(nn.Module):
         self.incl_softmax = incl_softmax
 
         # Dropout on input layer
-        self.input_dropout = nn.Dropout(p=input_dropout)
+        print('INPUT DROPOUT:', config['input_dropout'])
+        self.input_dropout = nn.Dropout(p=config['input_dropout'])
 
         # Dropout
         self.dropout = nn.Dropout(config['dropout_main'])
 
         # --- Layers and batchnorm ---
         nb_hidden_u = config['nb_hidden_u_aux'][-1:] + config['nb_hidden_u_main']
+
         for i in range(len(nb_hidden_u)):
-            # First layer: linear function handle in forward function below
+            # First layer: linear function defined in forward function below
             if i == 0:
                 self.bn_fatLayer = nn.BatchNorm1d(num_features=nb_hidden_u[i], eps=eps)
+                
             # Hidden layers
             else:
                 self.hidden_layers.append(
                         nn.Linear(nb_hidden_u[i-1], nb_hidden_u[i]))
+                
                 self.bn.append(
                         nn.BatchNorm1d(num_features=nb_hidden_u[i], eps=eps))
-            # Output layer
-            self.out = nn.Linear(nb_hidden_u[-1], n_targets)
+                # Layer init
+                nn.init.xavier_uniform_(self.hidden_layers[-1].weight)
+                nn.init.zeros_(self.hidden_layers[-1].bias)
+                
+            # Output layer : pas a la bonne place (une indentation de trop)
+            #self.out = nn.Linear(nb_hidden_u[-1], n_targets)
+        
+        # Output layer
+        self.out = nn.Linear(nb_hidden_u[-1], n_targets)
+        nn.init.xavier_uniform_(self.out.weight)
+        nn.init.zeros_(self.out.bias)
 
         self.hidden_layers = nn.ModuleList(self.hidden_layers)
         self.bn = nn.ModuleList(self.bn)
@@ -127,11 +163,19 @@ class MainNetwork(nn.Module):
                     torch.from_numpy(params['w3_main']))
 
         # Regular init
+        # this was moved above in the layer creation
+        """
         else:
             for layer in self.hidden_layers:
+                print('before init:')
+                print(layer.weight)
                 nn.init.xavier_uniform_(layer.weight)
+                print('after init:')
+                print(layer.weight)
+        
 
             nn.init.xavier_uniform_(self.out.weight)
+        """
 
         # ---Bias initialization---
         # Fat layer
@@ -148,25 +192,48 @@ class MainNetwork(nn.Module):
         # Output layer
         nn.init.zeros_(self.out.bias)
 
+        
+        # Batch norms
+        print('bn fat layer: {}'.format(self.bn_fatLayer))
+        for i,bn in enumerate(self.bn):
+            print('bn {}: {}'.format(i,bn))
+        # Weights and biases
+        for i,l in enumerate(self.hidden_layers):
+            print('MAIN NET WEIGHTS {}: {}'.format(i,l.weight))
+            print('MAIN NET BIAS {}: {}'.format(i,l.bias))
+        print('MAIN_NET OUT WEIGHTS:', self.out.weight)
+        print('MAIN NET OUT BIAS:', self.out.bias)
+
 
     def forward(self, x, fatLayer_weights, results_fullpath, epoch, batch,
                 step, save_layers=False):
         # input size: batch_size x n_feats
         # weight = comes from feat embedding net
         # now ^^^ is passed with forward
+        
+        print('IN FORWARD RDN NBS:', torch.rand(5))
+        print('X:', x)
 
         x = self.input_dropout(x)
+        
 
         # Fat layer
         z1 = F.linear(x, fatLayer_weights, bias=self.fat_bias)
+        print('Z1:', z1)
         a1 = torch.relu(z1)
+        print('A1 AFTER RELU:', a1)
         a1 = self.bn_fatLayer(a1)
+        print('A1 AFTER BN:', a1)
         a1 = self.dropout(a1)
-
+        print('A1 DROPOUT:', self.dropout)
+        print('RND NBS:', torch.rand(5))
+        print('A1 AFTER DROPOUT:', a1)
+        
         # Hidden layers
         next_input = a1
         for i,(layer, bn) in enumerate(zip(self.hidden_layers, self.bn)):
             # Save layer params
+            """
             if ((batch == 0) and (step == 'valid')):
                 # Save layer weights
                 filename = 'mainLayer_'+str(i)+'_weights_epoch'+str(epoch)+'_batch'+str(batch)
@@ -176,15 +243,17 @@ class MainNetwork(nn.Module):
                 filename = 'mainLayer_'+str(i)+'_bias_epoch'+str(epoch)+'_batch'+str(batch)
                 np.savez(os.path.join(results_fullpath, filename),
                          bias=layer.bias.detach().cpu())
-
+            """
             # Forward pass
             z = layer(next_input)
+            print('Z2:', z)
             a = torch.relu(z)
             a = bn(a)
             a = self.dropout(a)
             next_input = a
 
         # Output layer
+        """
         if ((batch == 0) and (step == 'valid')):
             filename = 'mainLayer_out_weights_epoch'+str(epoch)+'_batch'+str(batch)
             np.savez(os.path.join(results_fullpath, filename),
@@ -192,6 +261,7 @@ class MainNetwork(nn.Module):
             filename = 'mainLayer_out_bias_epoch'+str(epoch)+'_batch'+str(batch)
             np.savez(os.path.join(results_fullpath, filename),
                      bais=self.out.bias.detach().cpu())
+        """
         out = self.out(next_input)
 
         # Softmax will be computed in the loss. But want this during attributions
@@ -200,6 +270,9 @@ class MainNetwork(nn.Module):
 
         if save_layers:
             return next_input, out
+        
+        print('MAIN OUT:')
+        print(out)
 
         return out
 
@@ -215,6 +288,8 @@ class DietNetwork(nn.Module):
         # ----------------------------------------
         #               EMBEDDING
         # ----------------------------------------
+        # We are doing fake data
+        """
         # Load embedding
         emb = np.load(emb_filename)['emb']
         if len(emb.shape) == 3:
@@ -231,7 +306,12 @@ class DietNetwork(nn.Module):
         # Normalize embedding
         emb_norm = (emb ** 2).sum(0) ** 0.5
         emb = emb/emb_norm
-
+        """
+        emb = torch.tensor([[0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+                        [0.9, 0.8, 0.7, 0.6, 0.5, 0.4],
+                        [0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+                        [0.2, 0.2, 0.2, 0.2, 0.2, 0.2]])
+        
         # Send to device
         self.embedding = emb
         print('Embedding size: {}'.format(emb.size()))
@@ -255,13 +335,17 @@ class DietNetwork(nn.Module):
         # Main network input size
         n_feats = emb.size()[0]
 
+        # We are doing fake data
+        """
         # Main Network output size (nb targets)
         if task == 'regression':
             n_targets = 1
         elif task == 'classification':
             with h5py.File(dataset_filename, 'r') as f:
                 n_targets = len(f['class_label_names'])
-
+        """
+        n_targets = 3
+        
         # Instantiate main network
         self.main_net = MainNetwork(n_feats, n_targets, config, param_init)
         
@@ -296,8 +380,8 @@ class DietNetwork(nn.Module):
         # Save fat layer weights
         if ((batch == 0) and (step == 'train')):
             filename = 'fatLayer_weights_epoch'+str(epoch)+'_batch'+str(batch)
-            np.savez(os.path.join(results_fullpath, filename),
-                     fatLayer_weights=aux_net_out.detach().cpu())
+            #np.savez(os.path.join(results_fullpath, filename),
+            #         fatLayer_weights=aux_net_out.detach().cpu())
 
         return main_net_out
 

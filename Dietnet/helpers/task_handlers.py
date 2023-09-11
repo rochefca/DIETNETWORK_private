@@ -53,13 +53,14 @@ class ClassificationHandler():
 
 
     def init_batches_results(self, dataset, dataloader):
-        # Init the batch results using arrays filled with -1
-        self.batches_results['losses_wo_reduction'] = np.ones(len(dataloader))*-1
-        self.batches_results['preds'] = np.ones(len(dataset))*-1
-        self.batches_results['scores'] = np.ones((len(dataset), len(self.class_label_names)))*-1
-        self.batches_results['n_right'] = np.ones(len(dataloader))*-1
-        self.batches_results['ys'] = np.ones(len(dataset))*-1
-        self.batches_results['samples'] = np.ones(len(dataset))*-1
+        # Init the batch results using arrays filled with nan values
+        self.batches_results['losses_wo_reduction'] = np.full(len(dataloader), np.NaN)
+        self.batches_results['preds'] = np.full(len(dataset), np.NaN)
+        self.batches_results['scores'] = np.full((len(dataset), len(self.class_label_names)),np.NaN)
+        self.batches_results['n_right'] = np.full(len(dataloader),np.NaN)        
+        self.batches_results['ys'] = np.full(len(dataset),np.NaN) 
+        self.batches_results['samples'] = np.full(len(dataset),np.NaN)
+
     
     
     def init_indep_test_batches_results(self, dataset, dataloader):
@@ -122,7 +123,9 @@ class ClassificationHandler():
         """
 
         # Nb of samples
-        nb_samples_train = len(train_results['samples'])
+        # In train set nb of samples, we disregard nan values
+        # (that are caused by droping the last batch)
+        nb_samples_train = (~np.isnan(train_results['samples'])).sum()
         nb_samples_valid = len(valid_results['samples'])
 
         # Loss

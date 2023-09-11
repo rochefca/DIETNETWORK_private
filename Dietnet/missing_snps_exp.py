@@ -160,7 +160,7 @@ def main():
     #------------------------------
     print('\n---\nMissing data simulation\n')
     
-    miss_percent_list = [0.1, 0.25, 0.5, 0.7, 0.8, 0.9, 0.95, 0.99]
+    miss_percent_list = [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
     nb_feats = du.FoldDataset.data_x_original.shape[1]
     
     # Total nb of exepriments : we want same nb of exeperiments for all
@@ -187,7 +187,7 @@ def main():
         f_str = ""
         for i in miss_percent_list:
             f_str += '_'+str(i)
-        results_filename = 'missing_data_simulations'+f_str+'.txt'
+        results_filename = args.out_prefix+'_missing_data_simulations'+f_str+'.txt'
         results_file = os.path.join(args.results_path, results_filename)
         f = open(results_file, 'w')
         f.write('missing\taccuracy\n')
@@ -388,7 +388,8 @@ def parse_args():
             '--which-fold',
             type=int,
             default=0,
-            help='Which fold to train (1st fold is 0). Default: %(default)i'
+            help=('Trained model of which fold to test (1st fold is 0). '
+                  'Default: %(default)i')
             )
     
     # Results path
@@ -396,6 +397,12 @@ def parse_args():
             '--results-path',
             required=True,
             help='Where to save the results'
+            )
+    
+    parser.add_argument(
+            '--out-prefix',
+            default='',
+            help='Optional prefix for the output file of results'
             )
     
     return parser.parse_args()

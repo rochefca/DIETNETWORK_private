@@ -81,7 +81,7 @@ def eval_step(mod_handler, device, eval_dataset, valid_generator,
 
     task_handler = mod_handler.task_handler
 
-    # Reset to 0 batches results from previous epoch
+    # Reset batches results from previous epoch
     task_handler.init_batches_results(eval_dataset, valid_generator)
 
     # Batch start pos (to compile samples and labels)

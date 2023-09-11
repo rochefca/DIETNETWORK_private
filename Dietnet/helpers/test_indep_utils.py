@@ -38,8 +38,8 @@ def match_input_features(genotypes, test_snps, train_snps):
            cpu to gpu) 
     """
 
-    # Train and test snps are the same, return test genotypes and scale=1.0
-    if (test_snps.shape==train_snps.size) and (test_snps==train_snps).all():
+    # Train and test snps are the same, return test genotypes and scale=1.0    
+    if (test_snps.shape==train_snps.shape) and (test_snps==train_snps).all():
         return genotypes, 1.0
 
     # Test and train snps are not the same :
