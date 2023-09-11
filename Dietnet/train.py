@@ -274,6 +274,13 @@ def main():
         model_handler.task_handler.print_baseline_results(baseline)
         print('Computed baseline in {} seconds'.format(
             time.time() - baseline_start_time))
+        
+        # Save baseline as best model (for now)
+        torch.save({'epoch': 0,
+                    'model_state_dict': model_handler.model.state_dict(),
+                    'best_results': model_handler.task_handler.best_epoch_results},
+                   bestmodel_fullpath)
+        print('Saving best model')
 
 
     # --- Resume training: load last model and results ----
@@ -435,6 +442,9 @@ def main():
     # Load best model to do the test
     checkpoint = torch.load(bestmodel_fullpath)
     print('Loading best model from epoch {}'.format(checkpoint['epoch']))
+    print(bestmodel_fullpath)
+
+    sys.exit()
 
     model_handler.model.load_state_dict(checkpoint['model_state_dict'])
 
