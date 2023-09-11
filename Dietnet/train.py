@@ -341,6 +341,10 @@ def main():
         # Monitoring performance on train set (eval step with train set)
         train_monit_step_start_time = time.time()
 
+
+        # Removed the evaluated train results to keep same seed state as in previous
+        # implem that was only doing the train step (no evaluated train step)
+        """
         evaluated_train_results = mlu.eval_step(model_handler,
                                                 device,
                                                 train_set,
@@ -350,7 +354,7 @@ def main():
 
         train_monit_step_time = time.time() - train_monit_step_start_time
         #print('Train eval step executed in {} seconds'.format(time.time()-train_eval_step_start_time))
-
+        """
 
         # Monitoring performance on valid set (eval step with valid set)
         valid_monit_step_start_time = time.time()
@@ -369,11 +373,16 @@ def main():
         print('Train results:', flush=True)
         model_handler.task_handler.print_epoch_results(
                 train_results, valid_results)
+        
+        # Removed this because we removed the evaluated train step above
+        """
         print('Monitored results:')
         model_handler.task_handler.print_epoch_results(
                 evaluated_train_results, valid_results)
+        """
 
         # Write epoch predictions
+        """
         train_filename = 'train_results_epoch'+str(epoch+1)
         valid_filename = 'valid_results_epoch'+str(epoch+1)
 
@@ -385,6 +394,7 @@ def main():
 
         model_handler.task_handler.save_predictions(
                 valid_results, valid_fullpath)
+        """
 
         # Anneal learning rate
         for optimizer in model_handler.model.get_optimizers():
@@ -442,9 +452,6 @@ def main():
     # Load best model to do the test
     checkpoint = torch.load(bestmodel_fullpath)
     print('Loading best model from epoch {}'.format(checkpoint['epoch']))
-    print(bestmodel_fullpath)
-
-    sys.exit()
 
     model_handler.model.load_state_dict(checkpoint['model_state_dict'])
 

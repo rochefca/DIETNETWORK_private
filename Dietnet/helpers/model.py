@@ -16,17 +16,22 @@ class AuxiliaryNetwork(nn.Module):
 
         # Hidden layers : self.hidden layers
         nb_hidden_u = config['nb_hidden_u_aux']
+        uniform_init_limit = config['uniform_init_limit']
         self.hidden_layers = []
+        
         for i in range(len(nb_hidden_u)):
             # First layer
             if i == 0:
                 self.hidden_layers.append(
                         nn.Linear(n_feats_emb, nb_hidden_u[i], bias=False)
                         )
+                nn.init.uniform_(self.hidden_layers[-1].weight, a=-uniform_init_limit, b=uniform_init_limit)
             else:
                 self.hidden_layers.append(
                         nn.Linear(nb_hidden_u[i-1], nb_hidden_u[i], bias=False)
                         )
+                nn.init.uniform_(self.hidden_layers[-1].weight, a=-uniform_init_limit, b=uniform_init_limit)
+
         self.hidden_layers = nn.ModuleList(self.hidden_layers)
 
         # Parameters initialization
@@ -42,15 +47,18 @@ class AuxiliaryNetwork(nn.Module):
             self.hidden_layers[1].weight = torch.nn.Parameter(
                     torch.from_numpy(params['w2_aux']))
 
+        """
         else:
             uniform_init_limit = config['uniform_init_limit']
             for layer in self.hidden_layers:
                 nn.init.uniform_(layer.weight, a=-uniform_init_limit, b=uniform_init_limit)
+        """
 
 
     def forward(self, x, results_fullpath, epoch, batch, step, save_weights):
         for i,layer in enumerate(self.hidden_layers):
             # Save layer params
+            """
             if ((batch == 0) and (step == 'valid')):
                 # Save layer weights
                 filename = 'auxLayer_'+str(i)+'_weights_epoch'+str(epoch)+'_batch'+str(batch)
@@ -64,6 +72,8 @@ class AuxiliaryNetwork(nn.Module):
                 else:
                     np.savez(os.path.join(results_fullpath, filename),
                              bias=np.array([]))
+            """
+
             # Forward pass
             ze = layer(x)
             ae = torch.tanh(ze)
@@ -96,18 +106,30 @@ class MainNetwork(nn.Module):
 
         # --- Layers and batchnorm ---
         nb_hidden_u = config['nb_hidden_u_aux'][-1:] + config['nb_hidden_u_main']
+        
         for i in range(len(nb_hidden_u)):
             # First layer: linear function handle in forward function below
             if i == 0:
                 self.bn_fatLayer = nn.BatchNorm1d(num_features=nb_hidden_u[i], eps=eps)
+            
             # Hidden layers
             else:
                 self.hidden_layers.append(
                         nn.Linear(nb_hidden_u[i-1], nb_hidden_u[i]))
                 self.bn.append(
                         nn.BatchNorm1d(num_features=nb_hidden_u[i], eps=eps))
-            # Output layer
-            self.out = nn.Linear(nb_hidden_u[-1], n_targets)
+                
+                # Layer init
+                nn.init.xavier_uniform_(self.hidden_layers[-1].weight)
+                nn.init.zeros_(self.hidden_layers[-1].bias)
+            
+            # Output layer : pas la bonne place (une indentation de trop)
+            #self.out = nn.Linear(nb_hidden_u[-1], n_targets)
+        
+        # Output layer
+        self.out = nn.Linear(nb_hidden_u[-1], n_targets)
+        nn.init.xavier_uniform_(self.out.weight)
+        nn.init.zeros_(self.out.bias)
 
         self.hidden_layers = nn.ModuleList(self.hidden_layers)
         self.bn = nn.ModuleList(self.bn)
@@ -127,11 +149,14 @@ class MainNetwork(nn.Module):
                     torch.from_numpy(params['w3_main']))
 
         # Regular init
+        # this was moved above in the layer creation
+        """
         else:
             for layer in self.hidden_layers:
                 nn.init.xavier_uniform_(layer.weight)
 
             nn.init.xavier_uniform_(self.out.weight)
+        """
 
         # ---Bias initialization---
         # Fat layer
