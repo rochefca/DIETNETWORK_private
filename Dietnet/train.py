@@ -131,7 +131,7 @@ def main():
     fold_indices = indices_byfold['folds_indexes'][fold]
 
     # Input features statistics
-    inp_feat_stats = np.load(args.input_features_stats)
+    inp_feat_stats = np.load(args.input_features_stats, allow_pickle=True)
 
     mus = inp_feat_stats['means_by_fold'][fold]
     # Send to GPU
@@ -148,8 +148,13 @@ def main():
         sigmas = None
         print('Loaded {} means of input features'.format(len(mus)))
 
+    print('MUS')
+    print(mus[0:10])
+    print('SD')
+    print(sigmas[0:10])
+
     # TO DO
-    param_init=None
+    param_init=args.param_init
 
     # Dataset
     du.FoldDataset.dataset_file = args.dataset
@@ -224,7 +229,7 @@ def main():
 
     # Batch generators
     batch_size = config['batch_size']
-    train_generator = DataLoader(train_set, shuffle=True,
+    train_generator = DataLoader(train_set, shuffle=False,
             batch_size=batch_size, num_workers=0, drop_last=True)
 
     valid_generator = DataLoader(valid_set,
@@ -274,6 +279,7 @@ def main():
         model_handler.task_handler.print_baseline_results(baseline)
         print('Computed baseline in {} seconds'.format(
             time.time() - baseline_start_time))
+        
         
         # Save baseline as best model (for now)
         torch.save({'epoch': 0,
@@ -438,6 +444,15 @@ def main():
             has_early_stoped = True
             print('\nEarly stoping, exiting training loop', flush=True)
             break
+        
+        
+        # TEMP : SAVING WEIGHT AT EACH EPOCH
+        emodel_fullpath = os.path.join(results_fullpath, 'model_epoch_{}.pt'.format(epoch))
+        torch.save({'epoch': epoch+1,
+            'model_state_dict': model_handler.model.state_dict(),
+            'patience':patience},
+            emodel_fullpath)
+        
 
     print('Executed training in {} seconds'.format(
           time.time() - training_start_time))

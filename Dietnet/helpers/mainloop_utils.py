@@ -39,6 +39,7 @@ def train_step(mod_handler, device, train_dataset, train_generator,
         # Normalize
         if normalize:
             x_batch = du.normalize(x_batch, mus, sigmas)
+            
 
         # Reset optimizer
         optimizers = mod_handler.model.get_optimizers()
