@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-import helpers.test_external_utils as tu
+import helpers.test_indep_utils as tu
 import helpers.dataset_utils as du
 import helpers.log_utils as lu
 import helpers.model as model
@@ -52,49 +52,69 @@ def test():
     stime = time.time()
 
     # Dataset
-    du.FoldDataset.dataset_file = args.test_dataset
-    du.FoldDataset.f = h5py.File(args.test_dataset, 'r')
+    du.IndepTestDataset.dataset_file = args.test_dataset
+    du.IndepTestDataset.f = h5py.File(args.test_dataset, 'r')
 
     print('Loading input features')
-    du.FoldDataset.data_x = np.array(du.FoldDataset.f['inputs'], dtype=np.int8)
-
-    print('Loading samples')
-    du.FoldDataset.data_samples = np.array(du.FoldDataset.f['samples'])
+    du.IndepTestDataset.data_x = np.array(du.IndepTestDataset.f['inputs'], dtype=np.int8)
 
     print('\nLoaded {} genotypes of {} samples'.format(
-          du.FoldDataset.data_x.shape[1], du.FoldDataset.data_x.shape[0]))
+          du.IndepTestDataset.data_x.shape[1],
+          du.IndepTestDataset.data_x.shape[0]))
 
     print('Loaded test data in {} seconds'.format(time.time()-stime))
 
-    test_set = du.FoldDataset(
-            [i for i in range(len(du.FoldDataset.data_samples))])
+    # Init IndepTestDataset with set indexes being 0 to nb of samples in test set
+    test_set = du.IndepTestDataset(
+            [i for i in range(du.IndepTestDataset.data_x.shape[0])])
+
+    print('data x:', du.IndepTestDataset.data_x)
+    print('nb of samples:', len(test_set))
 
     print('---\n')
-
-
-    # ----------------------------------------
-    #       SCALE GENOTYPES IN TEST SET
-    # ----------------------------------------
-    # We remove SNPs that in test set but not in train set
-    # For SNPs in train set but not in test set, we put a missing value
-    # We scale non-missing genotypes in test set in proportion with the
-    # amount of SNPs in train set that are missing in test set
-    print('\n---\nMatching snps in test set according to snps in train set\n')
-
-    train_f = h5py.File(args.train_dataset, 'r')
-
-    # Adapt genotype values in test set based on snp used in train set
-    matched_genotypes, scale = tu.match_input_features(
-            du.FoldDataset.data_x,
-            np.array(du.FoldDataset.f['snp_names']),
-            np.array(train_f['snp_names']))
     
-    print('\nFinal matched genotypes: {} samples with {} matched genotypes'.format(
-            matched_genotypes.shape[0], matched_genotypes.shape[1]))
+    # Matching genotypes
+    if args.matched_test_dataset is None:
+        # ----------------------------------------
+        #       SCALE GENOTYPES IN TEST SET
+        # ----------------------------------------
+        # We remove SNPs that in test set but not in train set
+        # For SNPs in train set but not in test set, we put a missing value
+        # We scale non-missing genotypes in test set in proportion with the
+        # amount of SNPs in train set that are missing in test set
+        print('\n---\nMatching snps in test set according to snps in train set\n')
+
+        train_f = h5py.File(args.train_dataset, 'r')
+
+        # Adapt genotype values in test set based on snp used in train set
+        matched_genotypes, scale = tu.match_input_features(
+                du.IndepTestDataset.data_x,
+                np.array(du.IndepTestDataset.f['snp_names']),
+                np.array(train_f['snp_names']))
     
-    du.FoldDataset.data_x = matched_genotypes
-    print('---\n')
+        print('\nFinal matched genotypes: {} samples with test genotypes matched to {} train genotypes'.format(
+                matched_genotypes.shape[0], matched_genotypes.shape[1]))
+
+        du.IndepTestDataset.data_x = matched_genotypes
     
+        # Saving the matched dataset
+        print('Saving matched dataset to: {}'.format('dataset_test_tmp_matched.h5py'))
+        print(list(du.IndepTestDataset.f.keys()))
+        matched_f = h5py.File('dataset_test_tmp_matched.h5py', 'w')
+        matched_f.create_dataset('inputs', data=matched_genotypes)
+        matched_f.create_dataset('samples', data=du.IndepTestDataset.f['samples'])
+        matched_f.create_dataset('snp_names', data=du.IndepTestDataset.f['snp_names'])
+        matched_f.create_dataset('scale', data=np.array([scale]))
+        matched_f.close()
+
+        print('---\n')
+    
+    else:
+        matched_f = h5py.File(args.matched_test_dataset, 'r')
+        du.IndepTestDataset.data_x = np.array(matched_f['inputs'], dtype=np.int8)
+        scale = matched_f['scale'][0]
+        print('scale:', scale)
+
     # ---------------------------------------------------------------
     #                 ---- INFO FROM TRAINING PHASE ----
     # ---------------------------------------------------------------
@@ -162,12 +182,12 @@ def test():
 
     print('\nModel:', model_handler.model)
     
-    # Loading best model parameters
-    bestmodel_fullpath = os.path.join(args.train_results_path,
-                                      'best_model.pt')
-    checkpoint = torch.load(bestmodel_fullpath)
+    # Loading trained model parameters
+    checkpoint = torch.load(args.model_params)
     model_handler.model.load_state_dict(checkpoint['model_state_dict'])
-    print('\nLoaded best model from epoch {}'.format(checkpoint['epoch']))
+    print('\nLoaded model parameters from {} at epoch {}'.format(
+          args.model_params, checkpoint['epoch']))
+    print('---\n')
 
 
 
@@ -184,9 +204,33 @@ def test():
     
     # Batch generator
     test_generator = DataLoader(test_set,
-                                batch_size=batch_size,
+                                batch_size=config['batch_size'],
                                 shuffle=False,
                                 num_workers=0)
+    
+    for i,(idx,x) in enumerate(test_generator):
+        print('Batch', i)
+        print('samples:', idx)
+        print('xs:', x)
+
+    # Test step
+    model_handler.model.eval()
+    test_results = mlu.indep_test_step(model_handler,
+                                  device,
+                                  test_set,
+                                  test_generator,
+                                  mus, sigmas, args.normalize,
+                                  results_fullpath, 0, scale)
+    
+    # Save test results
+    np.savez('test_results.npz',
+             samples=test_results['samples'],
+             preds=test_results['preds'],
+             scores=test_results['scores'])
+    print('Test results:', test_results)
+    
+    
+
     
     sys.exit()
     
@@ -329,10 +373,10 @@ def parse_args():
             )
 
     parser.add_argument(
-            '--train-results-path',
+            '--model-params',
             type=str,
             required=True,
-            help='Path to directory with dataset, folds indexes and embedding.'
+            help='Pt file of params of the trained model.'
             )
 
     parser.add_argument(
@@ -341,6 +385,11 @@ def parse_args():
             required=True,
             help=('Dataset used to train the model. '
                   'Provide full path')
+            )
+    
+    parser.add_argument(
+            '--normalize',
+            action='store_true'
             )
 
     parser.add_argument(
@@ -357,6 +406,12 @@ def parse_args():
             help=('Hdf5 dataset of test samples and their genotypes. '
                   'Provide full path')
             )
+    
+    parser.add_argument(
+            '--matched-test-dataset',
+            type=str,
+            help='Dataset already matched on input features'
+    )
 
     parser.add_argument(
             '--config',
