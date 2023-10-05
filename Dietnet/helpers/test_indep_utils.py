@@ -39,7 +39,7 @@ def match_input_features(genotypes, test_snps, train_snps):
     """
 
     # Train and test snps are the same, return test genotypes and scale=1.0
-    if (test_snps.shape==train_snps.size) and (test_snps==train_snps).all():
+    if (test_snps.shape==train_snps.shape) and (test_snps==train_snps).all():
         return genotypes, 1.0
 
     # Test and train snps are not the same :
@@ -73,6 +73,9 @@ def match_input_features(genotypes, test_snps, train_snps):
     if nb_missing_features > 0:
         scale = float(train_snps.shape[0]) / nb_matching_features
         print('\nScale:', str(scale))
+    
+    else:
+        scale = 1.0
 
     return matched_genotypes, scale
 

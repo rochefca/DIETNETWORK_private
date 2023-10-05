@@ -68,9 +68,6 @@ def test():
     test_set = du.IndepTestDataset(
             [i for i in range(du.IndepTestDataset.data_x.shape[0])])
 
-    print('data x:', du.IndepTestDataset.data_x)
-    print('nb of samples:', len(test_set))
-
     print('---\n')
     
     # Matching genotypes
@@ -98,9 +95,10 @@ def test():
         du.IndepTestDataset.data_x = matched_genotypes
     
         # Saving the matched dataset
-        print('Saving matched dataset to: {}'.format('dataset_test_tmp_matched.h5py'))
+        filename = 'test_dataset_CAGv1_12063inds_173605snps_matchedto1000G.hdf5'
+        print('Saving matched dataset to: {}'.format(filename))
         print(list(du.IndepTestDataset.f.keys()))
-        matched_f = h5py.File('dataset_test_tmp_matched.h5py', 'w')
+        matched_f = h5py.File(filename, 'w')
         matched_f.create_dataset('inputs', data=matched_genotypes)
         matched_f.create_dataset('samples', data=du.IndepTestDataset.f['samples'])
         matched_f.create_dataset('snp_names', data=du.IndepTestDataset.f['snp_names'])
@@ -194,13 +192,12 @@ def test():
     # ---------------------------------------------------------------
     #                 ---- TEST SET UP ----
     # ---------------------------------------------------------------
-    print('\n---\nTest set up')
     # Dir where to save test results
-    exp_identifier = model_handler.get_exp_identifier(config, fold)
-    results_dirname = 'TEST_RESULTS_' + exp_identifier
-    results_fullpath = os.path.join(args.test_path, results_dirname)
-    lu.create_dir(results_fullpath)
-    print('Test results will be save to {}'.format(results_fullpath))
+    #exp_identifier = model_handler.get_exp_identifier(config, fold)
+    #results_dirname = 'TEST_RESULTS_' + exp_identifier
+    #results_fullpath = os.path.join(args.test_path, results_dirname)
+    #lu.create_dir(results_fullpath)
+    print('\n---')
     
     # Batch generator
     test_generator = DataLoader(test_set,
@@ -208,11 +205,6 @@ def test():
                                 shuffle=False,
                                 num_workers=0)
     
-    for i,(idx,x) in enumerate(test_generator):
-        print('Batch', i)
-        print('samples:', idx)
-        print('xs:', x)
-
     # Test step
     model_handler.model.eval()
     test_results = mlu.indep_test_step(model_handler,
@@ -220,151 +212,16 @@ def test():
                                   test_set,
                                   test_generator,
                                   mus, sigmas, args.normalize,
-                                  results_fullpath, 0, scale)
+                                  args.test_path, 0, scale)
     
     # Save test results
-    np.savez('test_results.npz',
+    results_path_file = os.path.join(args.test_path, args.test_name+'_results.npz')
+    np.savez(results_path_file,
              samples=test_results['samples'],
              preds=test_results['preds'],
              scores=test_results['scores'])
-    print('Test results:', test_results)
-    
-    
-
-    
-    sys.exit()
-    
-
-
-    # Load data from external dataset
-    parsed_data_filename = args.test_name + '_dataset.npz'
-
-    # If data was already parsed and saved to file
-    if Path(PurePath(args.exp_path, parsed_data_filename)).exists():
-        print('Loading test data from',
-              PurePath(args.exp_path, parsed_data_filename))
-
-        data = np.load(PurePath(args.exp_path, parsed_data_filename))
-        samples = data['samples']
-        train_snps = data['snp_names']
-        formatted_genotypes = data['inputs']
-        feature_scaling = data['feature_scaling'][0]
-
-        print('Loaded', str(formatted_genotypes.shape[1]), 'genotypes of',
-              str(formatted_genotypes.shape[0]), 'individuals.')
-
-    # Parse data and match test input features with those from train set
-    else:
-        # Parse data (here missing genotypes at the ind level are -1)
-        samples, snps, genotypes = du.load_genotypes(args.genotypes)
-        # Match snps of training and test sets
-        train_dataset = np.load(PurePath(args.exp_path, args.dataset))
-        train_snps = train_dataset['snp_names'] # SNPs used at training time
-        formatted_genotypes, feature_scaling = tu.match_features(genotypes,
-                                                                 snps,
-                                                                 train_snps)
-        # Save data
-        print('Saving parsed genotypes and matched input features to',
-                PurePath(args.exp_path, parsed_data_filename))
-        np.savez(PurePath(args.exp_path, parsed_data_filename),
-                 inputs=formatted_genotypes,
-                 snp_names=train_snps,
-                 samples=samples,
-                 feature_scaling=np.array([feature_scaling]))
-
-    # Load training fold specific data
-    train_dir = tu.get_train_dir(args.exp_path, args.exp_name, args.which_fold)
-    train_data = np.load(PurePath(train_dir, 'additional_data.npz'))
-    # Mu and sigma for feature normalization
-    mus = train_data['norm_mus']
-    sigmas = train_data['norm_sigmas']
-    # Trained model parameters
-    model_params = PurePath(train_dir, 'model_params.pt')
-    # Embedding used to train model
-    emb = du.load_embedding(PurePath(args.exp_path, args.embedding),
-                                  args.which_fold)
-
-    # Put data on GPU
-    formatted_genotypes = torch.from_numpy(formatted_genotypes).to(device)
-    emb = (emb.to(device)).float()
-    mus = (torch.from_numpy(mus).to(device)).float()
-    sigmas = (torch.from_numpy(sigmas).to(device)).float()
-
-    # Make test set: Do feature normalization later by batch for memory issues)
-    test_set = tu.TestDataset(formatted_genotypes, samples)
-
-    # Embedding normalization
-    emb_norm = (emb ** 2).sum(0) ** 0.5
-    emb = emb/emb_norm
-
-    # ---Build model---
-    # Input size
-    n_feats_emb = emb.size()[1] # input of aux net
-    n_feats = emb.size()[0] # input of main net
-    # Hidden layers size
-    emb_n_hidden_u = 100
-    discrim_n_hidden1_u = 100
-    discrim_n_hidden2_u = 100
-    # Output layer
-    n_targets = train_data['label_names'].shape[0]
-    print('nb targets:', n_targets)
-
-    comb_model = model.CombinedModel(
-                 n_feats=n_feats_emb,
-                 n_hidden_u=emb_n_hidden_u,
-                 n_hidden1_u=discrim_n_hidden1_u,
-                 n_hidden2_u=discrim_n_hidden2_u,
-                 n_targets=n_targets,
-                 param_init=None,
-                 input_dropout=0.)
-
-    # Set model parameters
-    comb_model.load_state_dict(torch.load(Path(model_params)))
-
-    comb_model.to(device)
-
-    # Put model in eval mode
-    comb_model.eval()
-    discrim_model = lambda x: comb_model(emb, x)
-
-    # Data generator
-    batch_size = 138
-    test_generator = DataLoader(test_set, batch_size=batch_size, shuffle=False)
-
-    # Evaluate
-    start_time = time.time()
-
-    for i, (x_batch, samples_batch) in enumerate(test_generator):
-        x_batch = x_batch.float()
-        # Replace missing values
-        du.replace_missing_values(x_batch, mus)
-        # Normalize input feature
-        x_batch_normed = du.normalize(x_batch, mus, sigmas)
-        # Scaling (Scale non-missing (non-zeros) values
-        x_batch_normed *= feature_scaling
-
-        # Forward pass in model
-        out = discrim_model(x_batch_normed)
-        # Get scores and prediction
-        score, pred = mlu.get_predictions(out)
-        if i == 0:
-            test_pred = pred
-            test_score = score
-        else:
-            test_pred = torch.cat((test_pred,pred), dim=-1)
-            test_score = torch.cat((test_score,score), dim=0)
-
-        print('Tested', str(i*batch_size), 'out of', str(len(samples)),
-                'individuals')
-    # End test
-    test_time = time.time() - start_time
-    print('Tested', str(len(test_pred)), 'individuals in', str(test_time),
-            'seconds.')
-
-    # Save results
-    tu.save_test_results(train_dir, args.test_name,
-                         samples, test_score, test_pred,
-                         train_data['label_names'])
+    print('Test results were saved to {}'.format(results_path_file))
+    print('---')
 
 
 def parse_args():
@@ -397,6 +254,12 @@ def parse_args():
             type=str,
             required=True,
             help='Where to save the test results'
+            )
+    
+    parser.add_argument(
+            '--test-name',
+            type=str,
+            required=True
             )
 
     parser.add_argument(

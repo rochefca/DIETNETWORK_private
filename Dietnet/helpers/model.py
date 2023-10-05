@@ -353,15 +353,6 @@ class DietNetwork(nn.Module):
                                      results_fullpath,
                                      epoch, batch, step, save_layers)
 
-        # SAVE THE WEIGHTS SOMEWHERE ELSE IN THE CODE
-        # Save fat layer weights
-        """
-        if ((batch == 0) and (step == 'train')):
-            filename = 'fatLayer_weights_epoch'+str(epoch)+'_batch'+str(batch)
-            np.savez(os.path.join(results_fullpath, filename),
-                     fatLayer_weights=aux_net_out.detach().cpu())
-        """
-
         return main_net_out
 
 

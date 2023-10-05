@@ -48,6 +48,7 @@ def main():
 
         # Embedding on train+valid sets
         if args.include_valid:
+            print('Including valid samples in emb computation')
             x = np.concatenate((x_train, x_valid))
             y = np.concatenate((y_train, y_valid))
         # Embedding on valid set
@@ -55,7 +56,7 @@ def main():
             x = x_valid
             y = y_valid
         # Embedding on test set
-        if args.only_test:
+        elif args.only_test:
             x = x_test
             y = y_test
         # Embedding on training set
@@ -66,6 +67,7 @@ def main():
         # Compute embedding
         #emb = compute_fold_embedding(x, y)
 
+        print('Computing embedding using {} samples'.format(len(y)))
         # One cpu
         if args.ncpus == 1:
             results.append(compute_fold_embedding(x, y, fold))

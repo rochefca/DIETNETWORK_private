@@ -338,19 +338,9 @@ def main():
         # --- Eval step ---
         model_handler.model.eval()
 
-        # Save weights
-        """
-        filename = 'tmp'
-        model_handler.model.save_parameters(filename)
-        sys.exit()
-        """
         # Monitoring performance on train set (eval step with train set)
         train_monit_step_start_time = time.time()
 
-
-        # Removed the evaluated train results to keep same seed state as in previous
-        # implem that was only doing the train step (no evaluated train step)
-        """
         evaluated_train_results = mlu.eval_step(model_handler,
                                                 device,
                                                 train_set,
@@ -360,7 +350,7 @@ def main():
 
         train_monit_step_time = time.time() - train_monit_step_start_time
         #print('Train eval step executed in {} seconds'.format(time.time()-train_eval_step_start_time))
-        """
+
 
         # Monitoring performance on valid set (eval step with valid set)
         valid_monit_step_start_time = time.time()
@@ -380,14 +370,12 @@ def main():
         model_handler.task_handler.print_epoch_results(
                 train_results, valid_results)
         
-        # Removed this because we removed the evaluated train step above
-        """
         print('Monitored results:')
         model_handler.task_handler.print_epoch_results(
                 evaluated_train_results, valid_results)
-        """
 
-        # Write epoch predictions
+
+        # Write epoch predictions to file
         """
         train_filename = 'train_results_epoch'+str(epoch+1)
         valid_filename = 'valid_results_epoch'+str(epoch+1)
@@ -447,11 +435,13 @@ def main():
         
         
         # TEMP : SAVING WEIGHT AT EACH EPOCH
+        """
         emodel_fullpath = os.path.join(results_fullpath, 'model_epoch_{}.pt'.format(epoch))
         torch.save({'epoch': epoch+1,
             'model_state_dict': model_handler.model.state_dict(),
             'patience':patience},
             emodel_fullpath)
+        """
         
 
     print('Executed training in {} seconds'.format(
