@@ -30,6 +30,8 @@ from helpers.task_handlers import ClassificationHandler, RegressionHandler
 
 
 def main():
+    LOGGER = False
+    
     # Monitoring execution time
     exp_start_time = time.time()
 
@@ -121,40 +123,67 @@ def main():
     # ----------------------------------------
     #                   DATA
     # ----------------------------------------
-    # Fold number
+    #  --- Fold number ---
     fold = args.which_fold
 
     print('\n---\nLoading fold {} data'.format(fold))
 
-    # Fold indices
+    # --- Fold indices ---
+    # Fold indices is a np array of 3 python arrays, each with
+    # train (0), valid (1) and test (2) indices
+    # The indices are the index of samples in the dataset hdf5 file
     indices_byfold = np.load(args.partition, allow_pickle=True)
     fold_indices = indices_byfold['folds_indexes'][fold]
+    
+    print('\nFolds indices array:', fold_indices.shape)
+    print('train indices:', len(fold_indices[0]))
+    print('valid indices:', len(fold_indices[1]))
+    print('test indices:', len(fold_indices[2]))
+    
+    if LOGGER:
+        print('\ntrain indices:', fold_indices[0][0:10])
+        print('valid indices:', fold_indices[1][0:10])
+        print('test indices:', fold_indices[2][0:10])
+        
 
-    # Input features statistics
+    # --- Input features statistics ---
+    # Input features statistics are stored in a numpy array in npz file
+    # npz file keys : means_by_fold and/or sd_by_fold
+    print('\nInput features statistics (mean and/or sd)')
     inp_feat_stats = np.load(args.input_features_stats, allow_pickle=True)
+    
+    print('Stats found in file:', list(inp_feat_stats.keys()))
 
+    # SNPs means
     mus = inp_feat_stats['means_by_fold'][fold]
-    # Send to GPU
-    mus = torch.from_numpy(mus).float().to(device)
+    mus = torch.from_numpy(mus).float().to(device) # send to device
+    
+    print('Means loaded: {}'.format(len(mus)))
 
+    # SNPs sd
     if 'sd_by_fold' in inp_feat_stats.files:
         sigmas = inp_feat_stats['sd_by_fold'][fold]
-        print('Loaded {} means and {} standard deviations of input features'.format(
-              len(mus), len(sigmas)))
+        print('Sd loaded: {}'.format(len(sigmas)))
 
         # Send to GPU
         sigmas = torch.from_numpy(sigmas).float().to(device)
     else:
         sigmas = None
-        print('Loaded {} means of input features'.format(len(mus)))
+        print('No sd found input feature stats npz file')
 
-    print('MUS')
-    print(mus[0:10])
-    print('SD')
-    print(sigmas[0:10])
+    if LOGGER:
+        print('\nMUS:')
+        print(mus[0:10])
+        print('SD')
+        print(sigmas[0:10])
 
     # TO DO
     param_init=args.param_init
+    
+    
+    # ----------------------------------------
+    #      PYTORCH DATASETS, DATALOADERS
+    # ----------------------------------------
 
     # Dataset
     du.FoldDataset.dataset_file = args.dataset
@@ -185,7 +214,19 @@ def main():
               len(train_set), len(valid_set), len(test_set)))
 
     print('---\n')
-
+    
+    LOGGER = False
+    if LOGGER:
+        print('train set first samples:')
+        print(train_set.set_indexes[0:10])
+        
+        batch_size = config['batch_size']
+        fixed_train_generator = DataLoader(train_set, shuffle=False,
+                                           batch_size=batch_size, num_workers=0, drop_last=True)
+        for i,d in enumerate(fixed_train_generator):
+            print('Batch:', i)
+            print('file index:', d[2])
+            if i == 10: break
 
     # ----------------------------------------
     #                 MODEL
@@ -229,7 +270,7 @@ def main():
 
     # Batch generators
     batch_size = config['batch_size']
-    train_generator = DataLoader(train_set, shuffle=False,
+    train_generator = DataLoader(train_set, shuffle=True,
             batch_size=batch_size, num_workers=0, drop_last=True)
 
     valid_generator = DataLoader(valid_set,

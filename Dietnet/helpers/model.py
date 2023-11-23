@@ -107,15 +107,15 @@ class MainNetwork(nn.Module):
     def __init__(self, n_feats, n_targets, config, param_init,
                  input_dropout=0., eps=1e-5, incl_bias=True, incl_softmax=False):
         super(MainNetwork, self).__init__()
-
+        
         self.hidden_layers = []
         self.bn_fatLayer = None
         self.bn = [] # batch normalization
         self.out = None # Output layer
         self.incl_softmax = incl_softmax
-
+        
         # Dropout on input layer
-        self.input_dropout = nn.Dropout(p=input_dropout)
+        self.input_dropout = nn.Dropout(config['input_dropout'])
 
         # Dropout
         self.dropout = nn.Dropout(config['dropout_main'])
@@ -211,7 +211,7 @@ class MainNetwork(nn.Module):
         # input size: batch_size x n_feats
         # weight = comes from feat embedding net
         # now ^^^ is passed with forward
-
+        
         x = self.input_dropout(x)
 
         # Fat layer
@@ -224,17 +224,17 @@ class MainNetwork(nn.Module):
         next_input = a1
         for i,(layer, bn) in enumerate(zip(self.hidden_layers, self.bn)):
             # Save layer params
-            """
-            if ((batch == 0) and (step == 'valid')):
-                # Save layer weights
-                filename = 'mainLayer_'+str(i)+'_weights_epoch'+str(epoch)+'_batch'+str(batch)
-                np.savez(os.path.join(results_fullpath, filename),
-                         weights=layer.weight.detach().cpu())
-                # Save layer bias
-                filename = 'mainLayer_'+str(i)+'_bias_epoch'+str(epoch)+'_batch'+str(batch)
-                np.savez(os.path.join(results_fullpath, filename),
-                         bias=layer.bias.detach().cpu())
-            """
+            
+            #if ((batch == 0) and (step == 'valid')):
+            #    # Save layer weights
+            #    filename = 'mainLayer_'+str(i)+'_weights_epoch'+str(epoch)+'_batch'+str(batch)
+            #    np.savez(os.path.join(results_fullpath, filename),
+            #             weights=layer.weight.detach().cpu())
+            #    # Save layer bias
+            #    filename = 'mainLayer_'+str(i)+'_bias_epoch'+str(epoch)+'_batch'+str(batch)
+            #    np.savez(os.path.join(results_fullpath, filename),
+            #             bias=layer.bias.detach().cpu())
+            
 
             # Forward pass
             z = layer(next_input)
@@ -244,15 +244,15 @@ class MainNetwork(nn.Module):
             next_input = a
 
         # Output layer
-        """
-        if ((batch == 0) and (step == 'valid')):
-            filename = 'mainLayer_out_weights_epoch'+str(epoch)+'_batch'+str(batch)
-            np.savez(os.path.join(results_fullpath, filename),
-                     weights=self.out.weight.detach().cpu())
-            filename = 'mainLayer_out_bias_epoch'+str(epoch)+'_batch'+str(batch)
-            np.savez(os.path.join(results_fullpath, filename),
-                     bais=self.out.bias.detach().cpu())
-        """
+        
+        #if ((batch == 0) and (step == 'valid')):
+        #    filename = 'mainLayer_out_weights_epoch'+str(epoch)+'_batch'+str(batch)
+        #    np.savez(os.path.join(results_fullpath, filename),
+        #             weights=self.out.weight.detach().cpu())
+        #    filename = 'mainLayer_out_bias_epoch'+str(epoch)+'_batch'+str(batch)
+        #    np.savez(os.path.join(results_fullpath, filename),
+        #             bais=self.out.bias.detach().cpu())
+        
         out = self.out(next_input)
 
         # Softmax will be computed in the loss. But want this during attributions
@@ -326,6 +326,7 @@ class DietNetwork(nn.Module):
         # Instantiate main network
         self.main_net = MainNetwork(n_feats, n_targets, config, param_init)
         
+
         # ----------------------------------------
         #               OPTIMIZERS
         # ----------------------------------------

@@ -22,8 +22,10 @@ class FoldDataset(torch.utils.data.Dataset):
         return len(self.set_indexes)
 
     def __getitem__(self, index):
-        # Data of all sets (train, valid, test) is in one file
-        # so we convert the index to match file index
+        # dataloader index goes from 0 to length of set
+        # data_x, data_y, data_samples groups data from all sets (train + valid + test)
+        # to get the item corresponding to dataloader index, we get the index of the sample
+        # in the whole dataset
         file_index = self.set_indexes[index]
 
         # Input features
