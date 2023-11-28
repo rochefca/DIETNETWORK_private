@@ -853,14 +853,6 @@ def parse_args():
             )
 
     parser.add_argument(
-            '--model',
-            type=str,
-            choices=['Dietnet', 'Mlp'],
-            default='Dietnet',
-            help='Model architecture. Default: %(default)s'
-            )
-
-    parser.add_argument(
             '--dataset',
             type=str,
             required=True,
@@ -901,6 +893,15 @@ def parse_args():
             help='Use this flag to normalize input features.'
             )
 
+    # Model
+    parser.add_argument(
+            '--model',
+            type=str,
+            choices=['Dietnet', 'Mlp'],
+            default='Dietnet',
+            help='Model architecture. Default: %(default)s'
+            )
+    
     # Task
     parser.add_argument(
             '--task',
