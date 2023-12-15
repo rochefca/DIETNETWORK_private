@@ -95,7 +95,8 @@ def test():
         du.IndepTestDataset.data_x = matched_genotypes
     
         # Saving the matched dataset
-        filename = 'test_dataset_CAGv1_12063inds_173605snps_matchedto1000G.hdf5'
+        filename = args.test_dataset[-5:] + '_matched_to_' + args.dataset
+        #filename = 'test_dataset_CAGv1_12063inds_173605snps_matchedto1000G.hdf5'
         print('Saving matched dataset to: {}'.format(filename))
         print(list(du.IndepTestDataset.f.keys()))
         matched_f = h5py.File(filename, 'w')
