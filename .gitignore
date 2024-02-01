@@ -17,3 +17,5 @@ Test_dev/
 Dietnet/tests/filenames.py
 
 Dietnet/depricated/
+Dietnet/Interpretability/depricated/
+Dietnet/helpers/depricated/
