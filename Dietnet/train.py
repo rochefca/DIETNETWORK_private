@@ -429,17 +429,9 @@ def main():
             model_handler.task_handler.save_predictions(
                     evaluated_train_results, train_fullpath)
 
-<<<<<<< HEAD
             model_handler.task_handler.save_predictions(
                     valid_results, valid_fullpath)
-=======
-        model_handler.task_handler.save_predictions(
-                evaluated_train_results, train_fullpath)
-
-        model_handler.task_handler.save_predictions(
-                valid_results, valid_fullpath)
         """
->>>>>>> upstream/dev
 
         # Anneal learning rate
         for optimizer in model_handler.model.get_optimizers():
