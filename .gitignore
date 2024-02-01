@@ -15,3 +15,5 @@ DATA/
 EXPERIMENT_01/
 Test_dev/
 Dietnet/tests/filenames.py
+
+Dietnet/depricated/
