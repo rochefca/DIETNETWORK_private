@@ -39,7 +39,8 @@ class DietNetworkHandler():
                     + str(config['nb_hidden_u_main'])[1:-1].replace(', ','_') \
                 + '_inpdrop_' + str(config['input_dropout']) \
                 + '_maindrop_' + str(config['dropout_main']) \
-                + '_lr_' + str(config['learning_rate']) \
+                + '_lraux_' + str(config['lr_aux']) \
+                + '_lrmain_' + str(config['lr_main']) \
                 + '_lra_' + str(config['learning_rate_annealing']) \
                 + '_uniform_init_limit_' + str(config['uniform_init_limit']) \
                 + '_epochs_' + str(config['epochs']) \
@@ -91,17 +92,18 @@ class MlpHandler():
         # Make the MLP model
         mlp_model = model.Mlp(task_handler, dataset_filename, config)
 
-        super(MlpHandler, self).__init__(mlp_model, task_handler)
-
+        #super(MlpHandler, self).__init__(mlp_model, task_handler)
+        self.model = mlp_model
+        self.task_handler = task_handler
 
     def get_exp_identifier(self, config, fold):
         exp_identifier =  self.task_handler.name \
                 + '_mlp' \
                 + '_layers_' \
-                    + str(config['nb_hidden_u'])[1:-1].replace(', ','_') \
+                    + str(config['nb_hidden_u_main'])[1:-1].replace(', ','_') \
                 + '_inpdrop_' + str(config['input_dropout']) \
-                + '_drop_' + str(config['dropout']) \
-                + '_lr_' + str(config['learning_rate']) \
+                + '_drop_' + str(config['dropout_main']) \
+                + '_lr_' + str(config['lr_main']) \
                 + '_lra_' + str(config['learning_rate_annealing']) \
                 + '_epochs_' + str(config['epochs']) \
                 + '_patience_' + str(config['patience']) \

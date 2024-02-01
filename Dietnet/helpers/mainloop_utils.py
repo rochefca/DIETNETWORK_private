@@ -18,7 +18,6 @@ def train_step(mod_handler,
                mus, 
                sigmas, 
                normalize, 
-               optimizer, 
                results_fullpath, 
                epoch):
 
@@ -47,9 +46,12 @@ def train_step(mod_handler,
         # Normalize
         if normalize:
             x_batch = du.normalize(x_batch, mus, sigmas)
+            
 
         # Reset optimizer
-        optimizer.zero_grad()
+        optimizers = mod_handler.model.get_optimizers()
+        for optimizer in optimizers:
+            optimizer.zero_grad()
 
         # Forward pass
         model_out = mod_handler.model.forward(x_batch, results_fullpath,
@@ -62,7 +64,8 @@ def train_step(mod_handler,
         loss.backward()
 
         # Optimize
-        optimizer.step()
+        for optimizer in optimizers:
+            optimizer.step()
 
         # Loss summed over all outputs (by default Pytorch returns mean loss
         # computed over nb of outputs)
@@ -156,14 +159,49 @@ def eval_step(mod_handler,
     return task_handler.batches_results.copy()
 
 
-def get_last_layers(comb_model, 
-                    device, 
-                    test_generator, 
-                    set_size,
-                    mus, 
-                    sigmas, 
-                    emb, 
-                    task):
+def indep_test_step(mod_handler, device, test_dataset, test_generator,
+                    mus, sigmas, normalize, results_fullpath, epoch, scale):
+    
+    task_handler = mod_handler.task_handler
+
+    # Reset to 0 batches results from previous epoch
+    task_handler.init_indep_test_batches_results(test_dataset, test_generator)
+
+    # Batch start pos (to compile samples and labels)
+    bstart = 0
+    for batch, (idx, x_batch) in enumerate(test_generator):
+        # Compile batch samples and labels
+        bend = bstart + len(idx) # batch end pos
+        task_handler.batches_results['samples'][bstart:bend] = idx
+
+        # Send data to device
+        x_batch = x_batch.to(device)
+        x_batch = x_batch.float()
+
+        # Replace missing values
+        du.replace_missing_values(x_batch, mus)
+
+        # Normalize
+        if normalize:
+            x_batch = du.normalize(x_batch, mus, sigmas)
+        
+        x_batch = x_batch*scale
+
+        # Forward pass
+        model_out = mod_handler.model.forward(x_batch, results_fullpath,
+                                              epoch, batch, 'test')
+
+        # Compile batch predictions
+        task_handler.update_indep_test_batches_preds(model_out, bstart, bend, batch)
+
+        # Update batch start pos
+        bstart = bend
+
+    return task_handler.batches_results.copy()
+
+
+def get_last_layers(comb_model, device, test_generator, set_size,
+                    mus, sigmas, emb, task):
     # Saving data seen while looping through minibatches
     minibatch_n_right = [] #number of good classifications
     test_pred = torch.tensor([]).to(device) #prediction of each sample
@@ -221,9 +259,6 @@ def get_last_layers(comb_model,
         test_acc = np.array(minibatch_n_right).sum() / float(set_size)*100
 
     return test_samples, test_ys, test_score, test_pred, test_acc, before_last_layer, out_layer
-
-
-
 
 
 def create_disc_model(comb_model, emb, device):

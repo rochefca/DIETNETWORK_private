@@ -56,31 +56,32 @@ def create_dataset():
     #----------------------------------------------
     #             LOAD CLASS LABELS
     #----------------------------------------------
-    # Loading class labels from file
-    print('\n---\nLoading class labels')
-    samples_in_labels, labels = cdu.load_labels(args.class_labels)
-    print('Loaded {} class labels of {} samples'.format(
-        len(labels), len(samples_in_labels)))
+    if args.class_labels is not None:
+        # Loading class labels from file
+        print('\n---\nLoading class labels')
+        samples_in_labels, labels = cdu.load_labels(args.class_labels)
+        print('Loaded {} class labels of {} samples'.format(
+            len(labels), len(samples_in_labels)))
 
-    # Matching class labels with genotypes
-    print('\nMatching class labels and genotypes using sample ids')
-    ordered_labels = cdu.order_labels(samples, samples_in_labels, labels)
-    print('Matched genotypes and class labels of {} samples'.format(
-          len(ordered_labels)))
+        # Matching class labels with genotypes
+        print('\nMatching class labels and genotypes using sample ids')
+        ordered_labels = cdu.order_labels(samples, samples_in_labels, labels)
+        print('Matched genotypes and class labels of {} samples'.format(
+            len(ordered_labels)))
 
-    # Encode class labels as numerical values
-    print('\nNumeric encoding of class labels')
-    class_label_names, \
-    encoded_class_labels = cdu.numeric_encode_labels(ordered_labels)
-    print('Encoded {} classes: {}\n---\n'.format(
-          len(class_label_names), class_label_names))
+        # Encode class labels as numerical values
+        print('\nNumeric encoding of class labels')
+        class_label_names, \
+        encoded_class_labels = cdu.numeric_encode_labels(ordered_labels)
+        print('Encoded {} classes: {}\n---\n'.format(
+              len(class_label_names), class_label_names))
 
 
     #----------------------------------------------
     #           LOAD REGRESSION LABELS
     #----------------------------------------------
-    # Loading regression labels from file
     if args.regression_labels is not None:
+        # Loading regression labels from file
         print('\n---\nLoading regression labels')
         samples_in_labels, labels = cdu.load_labels(args.regression_labels)
         print('Loaded {} regression labels of {} samples'.format(
@@ -121,9 +122,12 @@ def create_dataset():
     f.create_dataset('snp_names', data=snps.astype('S'))
     # Samples
     f.create_dataset('samples', data=samples.astype('S'))
+
     # Class labels
-    f.create_dataset('class_labels', data=encoded_class_labels)
-    f.create_dataset('class_label_names', data=class_label_names.astype('S'))
+    if args.class_labels is not None:
+        f.create_dataset('class_labels', data=encoded_class_labels)
+        f.create_dataset('class_label_names', data=class_label_names.astype('S'))
+
     # Regression labels
     if args.regression_labels is not None:
         f.create_dataset('regression_labels', data=regression_labels)
@@ -162,7 +166,6 @@ def parse_args():
     parser.add_argument(
             '--class-labels',
             type=str,
-            required=True,
             help=('File of samples and their class labels '
                   '(tab-separated format, one sample per line). '
                   'Provide full path')
@@ -171,6 +174,7 @@ def parse_args():
     # Regession labels (regression task)
     parser.add_argument(
             '--regression-labels',
+            type=str,
             help=('File of samples and their regression labels '
                   '(tab-separated format, one sample per line). '
                   'Provide full path')

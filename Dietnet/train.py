@@ -31,6 +31,8 @@ from helpers.task_handlers import ClassificationHandler, RegressionHandler
 SAVE_PREDICTIONS = False
 
 def main():
+    LOGGER = False
+    
     # Monitoring execution time
     exp_start_time = time.time()
 
@@ -122,35 +124,67 @@ def main():
     # ----------------------------------------
     #                   DATA
     # ----------------------------------------
-    # Fold number
+    #  --- Fold number ---
     fold = args.which_fold
 
     print('\n---\nLoading fold {} data'.format(fold))
 
-    # Fold indices
+    # --- Fold indices ---
+    # Fold indices is a np array of 3 python arrays, each with
+    # train (0), valid (1) and test (2) indices
+    # The indices are the index of samples in the dataset hdf5 file
     indices_byfold = np.load(args.partition, allow_pickle=True)
     fold_indices = indices_byfold['folds_indexes'][fold]
+    
+    print('\nFolds indices array:', fold_indices.shape)
+    print('train indices:', len(fold_indices[0]))
+    print('valid indices:', len(fold_indices[1]))
+    print('test indices:', len(fold_indices[2]))
+    
+    if LOGGER:
+        print('\ntrain indices:', fold_indices[0][0:10])
+        print('valid indices:', fold_indices[1][0:10])
+        print('test indices:', fold_indices[2][0:10])
+        
 
-    # Input features statistics
-    inp_feat_stats = np.load(args.input_features_stats)
+    # --- Input features statistics ---
+    # Input features statistics are stored in a numpy array in npz file
+    # npz file keys : means_by_fold and/or sd_by_fold
+    print('\nInput features statistics (mean and/or sd)')
+    inp_feat_stats = np.load(args.input_features_stats, allow_pickle=True)
+    
+    print('Stats found in file:', list(inp_feat_stats.keys()))
 
+    # SNPs means
     mus = inp_feat_stats['means_by_fold'][fold]
-    # Send to GPU
-    mus = torch.from_numpy(mus).float().to(device)
+    mus = torch.from_numpy(mus).float().to(device) # send to device
+    
+    print('Means loaded: {}'.format(len(mus)))
 
+    # SNPs sd
     if 'sd_by_fold' in inp_feat_stats.files:
         sigmas = inp_feat_stats['sd_by_fold'][fold]
-        print('Loaded {} means and {} standard deviations of input features'.format(
-              len(mus), len(sigmas)))
+        print('Sd loaded: {}'.format(len(sigmas)))
 
         # Send to GPU
         sigmas = torch.from_numpy(sigmas).float().to(device)
     else:
         sigmas = None
-        print('Loaded {} means of input features'.format(len(mus)))
+        print('No sd found input feature stats npz file')
+
+    if LOGGER:
+        print('\nMUS:')
+        print(mus[0:10])
+        print('SD')
+        print(sigmas[0:10])
 
     # TO DO
-    param_init=None
+    param_init=args.param_init
+    
+    
+    # ----------------------------------------
+    #      PYTORCH DATASETS, DATALOADERS
+    # ----------------------------------------
 
     # Dataset
     du.FoldDataset.dataset_file = args.dataset
@@ -181,7 +215,19 @@ def main():
               len(train_set), len(valid_set), len(test_set)))
 
     print('---\n')
-
+    
+    LOGGER = False
+    if LOGGER:
+        print('train set first samples:')
+        print(train_set.set_indexes[0:10])
+        
+        batch_size = config['batch_size']
+        fixed_train_generator = DataLoader(train_set, shuffle=False,
+                                           batch_size=batch_size, num_workers=0, drop_last=True)
+        for i,d in enumerate(fixed_train_generator):
+            print('Batch:', i)
+            print('file index:', d[2])
+            if i == 10: break
 
     # ----------------------------------------
     #                 MODEL
@@ -189,6 +235,7 @@ def main():
     print('\n---\nInitializing model')
 
     # Model architecture (Dietnet or Mlp)
+    # (optmizers are created in the model class)
     if args.model == 'Dietnet':
         model_handler = DietNetworkHandler(task_handler, fold,
                 args.embedding, device, args.dataset, config, param_init)
@@ -202,10 +249,6 @@ def main():
     model_handler.model.to(device)
 
     print(model_handler.model)
-
-    # Optimizer
-    lr = config['learning_rate']
-    optimizer = torch.optim.Adam(model_handler.model.parameters(), lr=lr)
 
 
     # ----------------------------------------
@@ -278,6 +321,14 @@ def main():
         model_handler.task_handler.print_baseline_results(baseline)
         print('Computed baseline in {} seconds'.format(
             time.time() - baseline_start_time))
+        
+        
+        # Save baseline as best model (for now)
+        torch.save({'epoch': 0,
+                    'model_state_dict': model_handler.model.state_dict(),
+                    'best_results': model_handler.task_handler.best_epoch_results},
+                   bestmodel_fullpath)
+        print('Saving best model')
 
 
     # --- Resume training: load last model and results ----
@@ -320,7 +371,7 @@ def main():
                                        device,
                                        train_set,
                                        train_generator,
-                                       mus, sigmas, args.normalize, optimizer,
+                                       mus, sigmas, args.normalize,
                                        results_fullpath, epoch)
 
         print('Train step time:', time.time()-stime)
@@ -329,12 +380,6 @@ def main():
         # --- Eval step ---
         model_handler.model.eval()
 
-        # Save weights
-        """
-        filename = 'tmp'
-        model_handler.model.save_parameters(filename)
-        sys.exit()
-        """
         # Monitoring performance on train set (eval step with train set)
         train_monit_step_start_time = time.time()
 
@@ -363,14 +408,17 @@ def main():
         #print('Eval step executed in {} seconds'.format(time.time()-eval_step_start_time))
 
         # Print epoch results
-        print('Train results:')
+        print('Train results:', flush=True)
         model_handler.task_handler.print_epoch_results(
                 train_results, valid_results)
+        
         print('Monitored results:')
         model_handler.task_handler.print_epoch_results(
                 evaluated_train_results, valid_results)
 
-        # Write epoch predictions
+
+        # Write epoch predictions to file
+        """
         train_filename = 'train_results_epoch'+str(epoch+1)
         valid_filename = 'valid_results_epoch'+str(epoch+1)
 
@@ -381,18 +429,27 @@ def main():
             model_handler.task_handler.save_predictions(
                     evaluated_train_results, train_fullpath)
 
+<<<<<<< HEAD
             model_handler.task_handler.save_predictions(
                     valid_results, valid_fullpath)
+=======
+        model_handler.task_handler.save_predictions(
+                evaluated_train_results, train_fullpath)
+
+        model_handler.task_handler.save_predictions(
+                valid_results, valid_fullpath)
+        """
+>>>>>>> upstream/dev
 
         # Anneal learning rate
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = \
-                param_group['lr']*config['learning_rate_annealing']
+        for optimizer in model_handler.model.get_optimizers():
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = \
+                    param_group['lr']*config['learning_rate_annealing']
 
-        # Print new LR
-        for param_group in optimizer.param_groups:
-            print('LR:', param_group['lr'])
-
+            # Print new LR
+            for param_group in optimizer.param_groups:
+                print('New (annealed) LR:', param_group['lr'])
 
         # Check model improvement and update best results
         has_improved = model_handler.task_handler.update_best_results(
@@ -426,6 +483,17 @@ def main():
             has_early_stoped = True
             print('\nEarly stoping, exiting training loop', flush=True)
             break
+        
+        
+        # TEMP : SAVING WEIGHT AT EACH EPOCH
+        """
+        emodel_fullpath = os.path.join(results_fullpath, 'model_epoch_{}.pt'.format(epoch))
+        torch.save({'epoch': epoch+1,
+            'model_state_dict': model_handler.model.state_dict(),
+            'patience':patience},
+            emodel_fullpath)
+        """
+        
 
     print('Executed training in {} seconds'.format(
           time.time() - training_start_time))
