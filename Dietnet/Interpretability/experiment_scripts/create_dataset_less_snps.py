@@ -3,12 +3,12 @@ Script to parse data into a npz format and partition data into folds
 Creates dataset.npz and folds_indexes.npz (default filenames)
 """
 import os
+import sys
 import time
 import numpy as np
 from pathlib import Path
 import argparse
 
-from captum.attr import IntegratedGradients
 import numpy as np
 import h5py
 import torch
@@ -16,13 +16,12 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
-import sys
-sys.path.append('../..')
+sys.path.append('/lustre06/project/6065672/sciclun4/ActiveProjects/DIETNETWORK/Dietnet')
 import helpers.dataset_utils as du
-from helpers import mainloop_utils as mlu
+import helpers.mainloop_utils as mlu
 import helpers.model as model
-from Interpretability import graph_attribution_manager as gam
 import helpers.log_utils as lu
+from Interpretability import graph_attribution_manager as gam
 
 
 def create_dataset():
@@ -30,32 +29,52 @@ def create_dataset():
 
     exp_path = Path(args.exp_path)
     full_path = exp_path / args.exp_name
-    full_paths = [full_path / '{}_fold{}/'.format(args.exp_name, fold) for fold in args.which_fold]
+    fold_folders = os.listdir(full_path) #[full_path / '*_fold{}/'.format(args.exp_name, fold) for fold in args.which_fold]
 
     print('Loading data')
     # Load samples, snp names and genotype values
-    data = du.load_data(os.path.join(exp_path, args.dataset))
+
+    # Dataset
+    du.FoldDataset.dataset_file = os.path.join(exp_path, args.dataset)
+    du.FoldDataset.f = h5py.File(du.FoldDataset.dataset_file, 'r')
+    #data = du.load_data(os.path.join(exp_path, args.dataset))
+    genotypes = du.FoldDataset.f['inputs'][:]
+    class_label_names = du.FoldDataset.f['class_label_names'][:]
+    snp_names = du.FoldDataset.f['snp_names'][:]
+    class_labels = du.FoldDataset.f['class_labels'][:]
+    samples = du.FoldDataset.f['samples'][:]
+
+    du.FoldDataset.f.close()
 
     # Load embedding
     emb = np.load(os.path.join(exp_path, args.embedding))['emb']
+
+    # load feature statistics
+    inp_feat_stats = np.load(args.input_features_stats)
+    means_by_fold = inp_feat_stats.f.means_by_fold[:]
+    sd_by_fold = inp_feat_stats.f.sd_by_fold[:]
 
     attr_manager = gam.GraphAttributionManager()
     attr_manager.set_device(torch.device('cpu'))
 
     abs_attr_all_pops = []
 
-    for full_path in full_paths:
-        hf = h5py.File(os.path.join(full_path, 'attrs_avg.h5'), 'r')
+    for fold_folder in fold_folders:
+        hf = h5py.File(os.path.join(full_path, fold_folder, 'attrs_avg.h5'), 'r')
         attr_manager.set_agg_attributions(np.nan_to_num(hf['avg_attr'][:, :, :]))
 
         #abs_attr_all_pops.append(np.abs(attr_manager.agg_attributions).sum(1).sum(1))        # rank attributions based on sum of absolute values across variant and across populations
         abs_attr_all_pops.append(np.amax(np.abs(attr_manager.agg_attributions), axis=(1,2)))  # rank attributions based on max of absolute values across variant and across populations
+    hf.close()
 
     abs_attr_all_pops = np.stack(abs_attr_all_pops).mean(0) # take mean across all folds
 
-    attr_manager.set_feat_names(np.load(os.path.join(full_paths[0], 'additional_data.npz'))['feature_names']) # pick one arbitrarily
-    attr_manager.set_label_names(np.load(os.path.join(full_paths[0], 'additional_data.npz'))['label_names'])
-    attr_manager.set_labels(torch.from_numpy(np.load(os.path.join(full_paths[0], 'additional_data.npz'))['test_labels']))
+    #attr_manager.set_feat_names(np.load(os.path.join(full_paths[0], 'additional_data.npz'))['feature_names']) # pick one arbitrarily
+    attr_manager.set_feat_names(snp_names) # pick one arbitrarily
+    #attr_manager.set_label_names(np.load(os.path.join(full_paths[0], 'additional_data.npz'))['label_names'])
+    attr_manager.set_label_names(class_label_names)
+    #attr_manager.set_labels(torch.from_numpy(np.load(os.path.join(full_paths[0], 'additional_data.npz'))['test_labels']))
+    attr_manager.set_labels(torch.from_numpy(class_labels))
 
     if args.percentile_to_remove is not None:
         remove_threshold = np.percentile(abs_attr_all_pops, args.percentile_to_remove)
@@ -73,21 +92,51 @@ def create_dataset():
         # this is to compute baseline for SNP attribution removal experiment
         to_keep = np.random.permutation(to_keep)
 
-    genotypes = data['inputs'][:, to_keep]
-    snps = data['snp_names'][to_keep]
+    # Create dataset
+    dataset_fullpath = os.path.join(exp_path, args.dataset_out)
+    f_out = h5py.File(dataset_fullpath, 'w')
+
+    # Input features
+    genotypes = genotypes[:,np.arange(len(to_keep))[to_keep]] # subset genotypes
+    f_out.create_dataset('inputs', data=genotypes)
+    # SNP names (Hdf5 doesn't support np UTF-8 encoding: snps.astype('S'))
+    f_out.create_dataset('snp_names', data=snp_names.astype('S'))
+    # Samples
+    f_out.create_dataset('samples', data=samples.astype('S'))
+    # Class labels
+    f_out.create_dataset('class_labels', data=class_labels)
+    f_out.create_dataset('class_label_names', data=class_label_names.astype('S'))
+    
+    # Regression labels
+    #if args.regression_labels is not None:
+    #    f_out.create_dataset('regression_labels', data=regression_labels)
+
+    f_out.close()
+
+    #genotypes = data['inputs'][:, to_keep]
+    #snps = data['snp_names'][to_keep]
 
     #  Save resulting data and embeddings
-    np.savez(os.path.join(exp_path, args.dataset_out),
-             inputs=genotypes,
-             snp_names=snps,
-             labels=data['labels'],
-             label_names=data['label_names'],
-             samples=data['samples'])
+    #np.savez(os.path.join(exp_path, args.dataset_out),
+    #         inputs=genotypes,
+    #         snp_names=snps,
+    #         labels=data['labels'],
+    #         label_names=data['label_names'],
+    #         samples=data['samples'])
     print('saved dataset to: {}'.format(os.path.join(exp_path, args.dataset_out)))
 
     np.savez(os.path.join(exp_path, args.embedding_out),
              emb=emb[:, to_keep, :])
+
+    #np.savez(os.path.join(exp_path, args.embedding_out),
+    #         emb=emb[:, to_keep, :])
     print('saved embedding to: {}'.format(os.path.join(exp_path, args.embedding_out)))
+
+    np.savez(os.path.join(exp_path, args.input_features_stats_out),
+             means_by_fold=means_by_fold[:, np.arange(len(to_keep))[to_keep]],
+             sd_by_fold=sd_by_fold[:, np.arange(len(to_keep))[to_keep]])
+    print('saved input feature stats to to: {}'.format(os.path.join(exp_path, args.input_features_stats_out)))
+
 
 
 def parse_args():
@@ -118,16 +167,6 @@ def parse_args():
             type=int,
             nargs="*", 
             help='Which fold(s) to train (1st fold is 0).'
-            )
-
-    parser.add_argument(
-            '--genotypes',
-            type=str,
-            required=True,
-            help=('File of genotypes (additive-encoding) in tab-separated '
-                  'format. Each line contains a sample id followed '
-                  'by its genotypes for every SNP. '
-                  'Missing genotypes can be encoded NA, ./. or -1 ')
             )
 
     parser.add_argument(
@@ -177,6 +216,31 @@ def parse_args():
             '--random-snp-removal',
             action='store_true',
             help=('Randomly remove SNPs (for baseline comparison)')
+            )
+
+    parser.add_argument(
+            '--input-features-stats',
+            type=str,
+            required=True,
+            help=('Input features mean and sd in npz format returned by '
+                  'compute_input_features_statistics.py '
+                  'Provide full path')
+            )
+    parser.add_argument(
+            '--input-features-stats-out',
+            type=str,
+            required=True,
+            help=('Input features mean and sd in npz format returned by '
+                  'compute_input_features_statistics.py '
+                  'Provide full path')
+            )
+
+    parser.add_argument(
+            '--partition',
+            type=str,
+            required=True,
+            help=('Npz dataset partition returned by partition_data.py '
+                  'Provide full path')
             )
 
 

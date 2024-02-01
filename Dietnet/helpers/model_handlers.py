@@ -17,7 +17,7 @@ class DietNetworkHandler():
         dn_model = model.DietNetwork(fold, emb_filename, device,
                                      dataset_filename, config,
                                      task_handler.name, param_init)
-        
+
         # store what is needed to make simple model
         self.fold = fold
         self.emb_filename = emb_filename
@@ -30,7 +30,7 @@ class DietNetworkHandler():
         #super(DietNetworkHandler, self).__init__(dn_model, task_handler)
         self.model = dn_model
 
-    def get_exp_identifier(self, config, fold):
+    def _get_exp_identifier_old(self, config, fold):
         exp_identifier =  self.task_handler.name \
                 + '_auxu_' \
                     + str(config['nb_hidden_u_aux'])[1:-1].replace(', ','_') \
@@ -46,8 +46,32 @@ class DietNetworkHandler():
                 + '_patience_' + str(config['patience']) \
                 + '_seed_' + str(config['seed']) \
                 + '_fold' + str(fold)
-
         return exp_identifier
+
+    def _get_exp_identifier_new(self, config, fold):
+        exp_identifier =  self.task_handler.name \
+                + '_auxu_' \
+                    + str(config['nb_hidden_u_aux'])[1:-1].replace(', ','_') \
+                + '_mainu_' \
+                    + str(config['nb_hidden_u_aux'][-1]) + '_' \
+                    + str(config['nb_hidden_u_main'])[1:-1].replace(', ','_') \
+                + '_inpdrop_' + str(config['input_dropout']) \
+                + '_maindrop_' + str(config['dropout_main']) \
+                + '_lraux_' + str(config['lr_aux']) \
+                + '_lrmain_' + str(config['lr_main']) \
+                + '_lra_' + str(config['learning_rate_annealing']) \
+                + '_uniform_init_limit_' + str(config['uniform_init_limit']) \
+                + '_epochs_' + str(config['epochs']) \
+                + '_patience_' + str(config['patience']) \
+                + '_seed_' + str(config['seed']) \
+                + '_fold' + str(fold)
+        return exp_identifier
+
+    def get_exp_identifier(self, config, fold):
+        if 'learning_rate' in config.keys():
+            return self._get_exp_identifier_old(config, fold)
+        else:
+            return self._get_exp_identifier_new(config, fold)
 
     def get_attribution_model(self):
         # Make simple model
@@ -55,6 +79,9 @@ class DietNetworkHandler():
                                               self.dataset_filename, self.config,
                                               self.task_handler.name, self.param_init)
         self.model_attr = dn_model_attr
+
+        # copy weights over!
+        self.model_attr.load_state_dict(self.model.state_dict())
         return self.model_attr
 
 

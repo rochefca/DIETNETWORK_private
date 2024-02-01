@@ -11,8 +11,16 @@ from helpers import model
 from helpers import dataset_utils as du
 
 
-def train_step(mod_handler, device, train_dataset, train_generator,
-               mus, sigmas, normalize, optimizer, results_fullpath, epoch):
+def train_step(mod_handler, 
+               device, 
+               train_dataset, 
+               train_generator,
+               mus, 
+               sigmas, 
+               normalize, 
+               optimizer, 
+               results_fullpath, 
+               epoch):
 
     task_handler = mod_handler.task_handler
 
@@ -65,7 +73,11 @@ def train_step(mod_handler, device, train_dataset, train_generator,
                 loss_wo_reduction
 
         # Compile batch predictions
-        task_handler.update_batches_preds(model_out, y_batch, bstart, bend, batch)
+        task_handler.update_batches_preds(model_out, 
+                                          y_batch, 
+                                          bstart, 
+                                          bend, 
+                                          batch)
 
         # Update batch start pos
         bstart = bend
@@ -73,8 +85,16 @@ def train_step(mod_handler, device, train_dataset, train_generator,
     return task_handler.batches_results.copy()
 
 
-def eval_step(mod_handler, device, eval_dataset, valid_generator,
-              mus, sigmas, normalize, results_fullpath, epoch):
+def eval_step(mod_handler, 
+              device, 
+              eval_dataset, 
+              valid_generator,
+              mus, 
+              sigmas, 
+              normalize, 
+              results_fullpath, 
+              epoch, 
+              scale=1.0):
 
     task_handler = mod_handler.task_handler
 
@@ -95,18 +115,25 @@ def eval_step(mod_handler, device, eval_dataset, valid_generator,
 
         y_batch = task_handler.format_ybatch(y_batch)
 
-        # Replace missing values
+        # Replace missing values : missing values (-1) become the SNP mean
         du.replace_missing_values(x_batch, mus)
 
-        # Normalize
+        # Normalize (missing values become 0, because we substract the mean)
         if normalize:
             x_batch = du.normalize(x_batch, mus, sigmas)
+        
+        # The scaling does not affect missing values because they are 0
+        x_batch = x_batch*scale
 
         # Forward pass
-        model_out = mod_handler.model.forward(x_batch, results_fullpath,
-                                        epoch, batch, 'valid')
+        model_out = mod_handler.model.forward(x_batch, 
+                                              results_fullpath,
+                                              epoch, 
+                                              batch, 
+                                              'valid')
         # Loss
-        loss = task_handler.compute_loss(model_out, y_batch)
+        loss = task_handler.compute_loss(model_out,
+                                         y_batch)
 
         # Loss summed over all outputs (by default Pytorch returns mean loss
         # computed over nb of outputs)
@@ -117,7 +144,11 @@ def eval_step(mod_handler, device, eval_dataset, valid_generator,
                 loss_wo_reduction
 
         # Compile batch predictions
-        task_handler.update_batches_preds(model_out, y_batch, bstart, bend, batch)
+        task_handler.update_batches_preds(model_out, 
+                                          y_batch, 
+                                          bstart, 
+                                          bend, 
+                                          batch)
 
         # Update batch start pos
         bstart = bend
@@ -125,8 +156,14 @@ def eval_step(mod_handler, device, eval_dataset, valid_generator,
     return task_handler.batches_results.copy()
 
 
-def get_last_layers(comb_model, device, test_generator, set_size,
-                    mus, sigmas, emb, task):
+def get_last_layers(comb_model, 
+                    device, 
+                    test_generator, 
+                    set_size,
+                    mus, 
+                    sigmas, 
+                    emb, 
+                    task):
     # Saving data seen while looping through minibatches
     minibatch_n_right = [] #number of good classifications
     test_pred = torch.tensor([]).to(device) #prediction of each sample
@@ -157,14 +194,20 @@ def get_last_layers(comb_model, device, test_generator, set_size,
         comb_model_before_last, comb_model_out = comb_model(emb, x_batch, save_layers=True)
 
         # Save layers
-        before_last_layer = torch.cat((before_last_layer,comb_model_before_last.detach().cpu()),dim=0)
-        out_layer = torch.cat((out_layer,comb_model_out.detach().cpu()), dim=0)
+        before_last_layer = torch.cat((before_last_layer,
+                                       comb_model_before_last.detach().cpu()),
+                                      dim=0)
+        out_layer = torch.cat((out_layer,
+                               comb_model_out.detach().cpu()), 
+                              dim=0)
 
         # Predictions
         if task == 'classification':
             score, pred = get_predictions(comb_model_out)
-            test_pred = torch.cat((test_pred,pred), dim=-1)
-            test_score = torch.cat((test_score,score), dim=0)
+            test_pred = torch.cat((test_pred,pred), 
+                                  dim=-1)
+            test_score = torch.cat((test_score,score), 
+                                   dim=0)
 
             # Nb of good classifications for the minibatch
             minibatch_n_right.append(((y_batch - pred) == 0).sum().item())

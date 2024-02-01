@@ -1,4 +1,5 @@
 import itertools
+import sys
 
 import pandas as pd
 import numpy as np
@@ -11,6 +12,10 @@ except ImportError:
     pass
 
 import matplotlib.pyplot as plt
+
+
+sys.path.append('/lustre06/project/6065672/sciclun4/ActiveProjects/DIETNETWORK/Dietnet')
+import helpers.dataset_utils as du
 
 def make_summary_tables(x_test, test_generator, snp_locations):
     """
@@ -304,3 +309,94 @@ def visualize_positions(attr, start=0, stop=100, variant=1, _class=1):
     select = attr[:,variant, _class][~np.isnan(attr[:,variant, _class])]
     plt.imshow(select[start:stop].reshape(-1,1).repeat(10, 1).T, cmap='viridis')
     plt.colorbar()
+
+
+def test_net_quickly(disc_net, test_generator, mus, sigmas, normalize, device=torch.device('cpu'), scale_out=1.0):
+    #  check that model gets correct performance
+    acc = 0
+    total = 0
+    preds = []
+    for i, data in enumerate(test_generator):
+        
+        # Replace missing values
+        du.replace_missing_values(data[0], mus)
+
+        # Normalize
+        if normalize:
+            data[0] = du.normalize(data[0], mus, sigmas)
+        
+        p = disc_net((data[0]*scale_out).to(device))
+        preds.append(p)
+        acc += (p.argmax(1) == data[1].to(device)).sum()
+        total += data[1].shape[0]
+        #if i == 5:
+        #    break
+    preds = torch.cat(preds)
+    return acc.item(), total, preds
+
+
+# may remove
+def match_features(genotypes, to_keep):
+    feature_scaling = 1.0 # 1.0 is no scaling
+    formatted_genotypes = -np.ones((genotypes.shape[0], to_keep.shape[0]),
+                                    dtype='int8')
+    formatted_genotypes[:,to_keep] = genotypes[:,to_keep]
+    feature_scaling = 1/to_keep.mean()
+    return formatted_genotypes, feature_scaling
+
+
+def match_input_features(genotypes, test_snps, train_snps):
+    """
+    Check if input features in test and training sets are the same.
+    If not:
+        1. Input features that are in test set but not in training set
+           will be ignored.
+           
+        2. Input features that are in training set but not in test set
+           are added to the matrix of genotypes as missing values (-1).
+           
+        3. Non missing genotypes in test set will be scaled according to the 
+           proportion of SNPs from train set that are missing in test set. We
+           return the scale to be used for scaling.
+           (We don't do the scaling here, we do it on the gpu device right
+           before feeding the data into the network for faster transfer from 
+           cpu to gpu) 
+    """
+
+    # Train and test snps are the same, return test genotypes and scale=1.0
+    if (test_snps.shape==train_snps.size) and (test_snps==train_snps).all():
+        return genotypes, 1.0
+
+    # Test and train snps are not the same :
+    # set genotypes of missing snps in test set to -1
+    # scale non-missing genotypes by a factor = nb_train_snps / nb_test_snps
+    nb_ignored_features = 0
+    nb_matching_features = 0
+    matched_genotypes = -np.ones((genotypes.shape[0], train_snps.shape[0]),
+            dtype='int8')
+
+    for i,snp in enumerate(test_snps):
+        if snp in train_snps:
+            matched_genotypes[:,(train_snps==snp).argmax()] = genotypes[:,i]
+            nb_matching_features +=1
+        else:
+            nb_ignored_features +=1
+
+        if i % 1000 == 0 and i != 0:
+            print('Matched', str(i), 'of', str(test_snps.shape[0]), 'test input features')
+    
+    print('Matched', str(test_snps.shape[0]), 'of',
+            str(test_snps.shape[0]), 'input features')
+
+    # SNPs in test set but not in training set
+    if nb_ignored_features > 0:
+        print(str(nb_ignored_features), 'test features ignored')
+
+    nb_missing_features = train_snps.shape[0] - nb_matching_features
+   
+    # Scale
+    if nb_missing_features > 0:
+        scale = float(train_snps.shape[0]) / nb_matching_features
+        print('\nScale:', str(scale))
+
+    return matched_genotypes, scale

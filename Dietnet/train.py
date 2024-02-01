@@ -28,6 +28,7 @@ import helpers.log_utils as lu
 from helpers.model_handlers import DietNetworkHandler, MlpHandler
 from helpers.task_handlers import ClassificationHandler, RegressionHandler
 
+SAVE_PREDICTIONS = False
 
 def main():
     # Monitoring execution time
@@ -375,12 +376,13 @@ def main():
 
         train_fullpath = os.path.join(results_fullpath, train_filename)
         valid_fullpath = os.path.join(results_fullpath, valid_filename)
+        
+        if SAVE_PREDICTIONS:
+            model_handler.task_handler.save_predictions(
+                    evaluated_train_results, train_fullpath)
 
-        model_handler.task_handler.save_predictions(
-                evaluated_train_results, train_fullpath)
-
-        model_handler.task_handler.save_predictions(
-                valid_results, valid_fullpath)
+            model_handler.task_handler.save_predictions(
+                    valid_results, valid_fullpath)
 
         # Anneal learning rate
         for param_group in optimizer.param_groups:

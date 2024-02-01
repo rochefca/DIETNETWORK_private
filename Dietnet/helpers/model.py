@@ -9,6 +9,7 @@ import torch.nn.functional as F
 
 from helpers.task_handlers import ClassificationHandler, RegressionHandler
 
+SAVE_WEIGHTS = False
 
 class AuxiliaryNetwork(nn.Module):
     def __init__(self, n_feats_emb, config, param_init):
@@ -51,7 +52,7 @@ class AuxiliaryNetwork(nn.Module):
     def forward(self, x, results_fullpath, epoch, batch, step, save_weights):
         for i,layer in enumerate(self.hidden_layers):
             # Save layer params
-            if ((batch == 0) and (step == 'valid')):
+            if (((batch == 0) and (step == 'valid')) and SAVE_WEIGHTS):
                 # Save layer weights
                 filename = 'auxLayer_'+str(i)+'_weights_epoch'+str(epoch)+'_batch'+str(batch)
                 np.savez(os.path.join(results_fullpath, filename),
@@ -167,7 +168,7 @@ class MainNetwork(nn.Module):
         next_input = a1
         for i,(layer, bn) in enumerate(zip(self.hidden_layers, self.bn)):
             # Save layer params
-            if ((batch == 0) and (step == 'valid')):
+            if (((batch == 0) and (step == 'valid')) and SAVE_WEIGHTS):
                 # Save layer weights
                 filename = 'mainLayer_'+str(i)+'_weights_epoch'+str(epoch)+'_batch'+str(batch)
                 np.savez(os.path.join(results_fullpath, filename),
@@ -185,7 +186,7 @@ class MainNetwork(nn.Module):
             next_input = a
 
         # Output layer
-        if ((batch == 0) and (step == 'valid')):
+        if (((batch == 0) and (step == 'valid')) and SAVE_WEIGHTS):
             filename = 'mainLayer_out_weights_epoch'+str(epoch)+'_batch'+str(batch)
             np.savez(os.path.join(results_fullpath, filename),
                      weights=self.out.weight.detach().cpu())
@@ -280,7 +281,7 @@ class DietNetwork(nn.Module):
 
         # SAVE THE WEIGHTS SOMEWHERE ELSE IN THE CODE
         # Save fat layer weights
-        if ((batch == 0) and (step == 'train')):
+        if (((batch == 0) and (step == 'train')) and SAVE_WEIGHTS):
             filename = 'fatLayer_weights_epoch'+str(epoch)+'_batch'+str(batch)
             np.savez(os.path.join(results_fullpath, filename),
                      fatLayer_weights=aux_net_out.detach().cpu())
@@ -298,12 +299,23 @@ class DietNetworkAttr(DietNetwork):
     def __init__(self, fold, emb_filename, device,
                  dataset_filename, config, task, param_init,
                  input_dropout=0., eps=1e-5, incl_bias=True, incl_softmax=False):
-        super(DietNetworkAttr, self).__init__(fold, emb_filename, device, dataset_filename, config, task, param_init, input_dropout, eps, incl_bias, incl_softmax)
+        super(DietNetworkAttr, self).__init__(fold, 
+                                              emb_filename, 
+                                              device, 
+                                              dataset_filename, 
+                                              config, 
+                                              task, 
+                                              param_init, 
+                                              input_dropout, 
+                                              eps, 
+                                              incl_bias, 
+                                              incl_softmax)
         self.results_fullpath = 'Dummy'
 
     def forward(self, x_batch):
         # Forward pass in auxilliary net
-        aux_net_out = self.aux_net(self.embedding, self.results_fullpath,
+        aux_net_out = self.aux_net(self.embedding, 
+                                   self.results_fullpath,
                                    1, 1, 1, save_weights=False)
 
         # Forward pass in discrim net

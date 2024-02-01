@@ -188,3 +188,25 @@ def normalize(x, per_feature_mean, per_feature_sd):
     x_norm = (x - per_feature_mean) / per_feature_sd
 
     return x_norm
+
+
+class IndepTestDataset(torch.utils.data.Dataset):
+    
+    # These variables are set in test_independent_dataset.py
+    dataset_file = None # path to h5py dataset file
+    f = None # Dataset file handler (h5py.File in reading mode)
+    task_handler = None # Classification or regression
+    data_x = None
+
+    def __init__(self, samples):
+        self.set_indexes = np.arange(len(samples))
+
+    def __len__(self):
+        return len(self.set_indexes)
+
+    def __getitem__(self, index):
+        # Input features
+        #x = np.array(self.f['inputs'][file_index], dtype=np.int8)
+        x = self.data_x[index]
+
+        return index,x
