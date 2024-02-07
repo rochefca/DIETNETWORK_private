@@ -1,7 +1,7 @@
 """
 This script creates the AttributionManager object, which handles attribution creation and analysis
 """
-
+import copy
 from pathlib import Path
 
 import torch
@@ -75,10 +75,16 @@ class AttributionManager():
             self.attr_func = engine.Saliency(self.model, **kwargs)
         elif attr_type == 'feat_ablation':
             self.attr_func = engine.FeatureAblation(self.model, **kwargs)
+        elif attr_type == 'DeepLift':
+            self.attr_func = engine.DeepLift(self.model, **kwargs)
+        elif attr_type == 'Lime':
+            self.attr_func = engine.Lime(self.model, **kwargs)
         else:
             raise NotImplementedError
 
-        print('initialized attribution_function. You can call `create_attributions` method once you set model and data_generator')
+        print('initialized attribution_function.')
+        print('You can call `create_attributions` method ')
+        print('once you set model and data_generator')
 
     def set_model(self, model):
         self.model = model
@@ -109,7 +115,11 @@ class AttributionManager():
         """
         return self.create_mode and (self.embedding is not None)
 
-    def create_raw_attributions(self, compute_subset, only_true_labels=False, use_embedding=False, **kwargs):
+    def create_raw_attributions(self, 
+                                compute_subset, 
+                                only_true_labels=False, 
+                                use_embedding=False, 
+                                **kwargs):
         """
         Computes attr_func for true_labels or for all labels and saves them to an h5 file
         This file can be quite large (20GB)
@@ -119,7 +129,9 @@ class AttributionManager():
         else:
 
             if use_embedding:
-                print('Computing with embeddings. Ensure that the model you use is compatable with this or you will get silent errors!')
+                print('Computing with embeddings.')
+                print('Ensure that the model you use is compatable with this')
+                print('or you will get silent errors!')
 
             #  These kwargs get passed into self.attr_func.attribute 
             #  We save them in this variable
@@ -129,6 +141,8 @@ class AttributionManager():
                 if only_true_labels:
                     n_categories = 1
                 hf.create_dataset(self.attr_type, shape=[n_samples, n_feats, n_categories])
+                if 'return_convergence_delta' in kwargs:
+                    hf.create_dataset(self.attr_type+'_deltas', shape=[n_samples, n_categories])
 
                 #  include additional dataset of attributions for the embedding
                 if use_embedding:
@@ -144,16 +158,19 @@ class AttributionManager():
                     for x_batch, y_batch, _ in self.data_generator:
                         # Forward pass
                         if only_true_labels:
-                             attr, attr_emb = self._compute_attribute_true_class(x_batch,
-                                                                                 y_batch,
-                                                                                 use_embedding,
-                                                                                 **kwargs)
+                            attr, attr_emb, deltas = self._compute_attribute_true_class(x_batch,
+                                                                                        y_batch,
+                                                                                        use_embedding,
+                                                                                        **kwargs)
                         else:
-                            attr, attr_emb = self._compute_attribute_each_class(x_batch,
-                                                                                np.arange(n_categories),
-                                                                                use_embedding,
-                                                                                **kwargs)
+                            attr, attr_emb, deltas = self._compute_attribute_each_class(x_batch,
+                                                                                        np.arange(n_categories),
+                                                                                        use_embedding,
+                                                                                        **kwargs)
                         #  make sure you are on CPU when copying to hf object
+                        if 'return_convergence_delta' in kwargs:
+                            hf[self.attr_type+'_deltas'][idx:idx+len(x_batch)] = deltas.permute(1,0).cpu().numpy()
+
                         hf[self.attr_type][idx:idx+len(x_batch)] = attr.permute(1,2,0).cpu().numpy()
                         if use_embedding:
                             hf[self.attr_type+ '_emb'][idx:idx+len(x_batch)] = attr_emb.permute(1,2,3,0).cpu().numpy()
@@ -174,20 +191,49 @@ class AttributionManager():
         **kwargs passed directly to attr_func.attribute (e.g. n_steps=50)
         all inputs and computations done on device, output stays on device
         """
-        inputs = (input_batch.to(self.device)) if not use_embedding else (self.embedding.view(1,-1).repeat(input_batch.shape[0], 
-                                                                                                       1).to(self.device), 
-                                                                          input_batch.to(self.device))
+
+        inputs = (input_batch.to(self.device)) if not use_embedding \
+        else (self.embedding.view(1,-1).repeat(input_batch.shape[0], 
+                                               1).to(self.device), 
+              input_batch.to(self.device))
 
         atts_per_class = []
         atts_per_class_emb = None
+        deltas_per_class = []
         if use_embedding:
             atts_per_class_emb = []
 
         for label in label_names:
-            #  don't pass args which produce other outputs (e.g. return_convergence_delta for int_grad)
-            attr = self.attr_func.attribute(inputs=inputs, 
-                                            target=torch.empty(input_batch.shape[0]).fill_(label).to(self.device).long(),
-                                            **kwargs)
+            targets = torch.empty(input_batch.shape[0]).fill_(label).to(self.device).long()
+            
+            assert 'baselines' in kwargs # make sure you have baselines defined!
+            if len(kwargs['baselines']) > 1:
+                attrs_baselines, deltas_baselines = [], []
+                kwargs_sans_bl = copy.deepcopy(kwargs)
+                baselines = kwargs_sans_bl.pop('baselines')
+                for baseline in baselines:
+                    if 'return_convergence_delta' in kwargs:
+                        attr, delta = self.attr_func.attribute(inputs=inputs, 
+                                                               target=targets, 
+                                                               baselines=baseline.view(1,-1),
+                                                               **kwargs_sans_bl)
+                        deltas_baselines.append(delta)
+                    else:
+                        attr = self.attr_func.attribute(inputs=inputs, 
+                                                        target=targets,
+                                                        baselines=baseline.view(1,-1),
+                                                        **kwargs_sans_bl)
+                    attrs_baselines.append(attr)
+
+                delta = torch.stack(deltas_baselines).mean(0)
+                attr = torch.stack(attrs_baselines).mean(0)
+            else:
+                if 'return_convergence_delta' in kwargs:
+                    #  don't pass args which produce other outputs (other then return_convergence_delta for int_grad)
+                    attr, delta = self.attr_func.attribute(inputs=inputs, target=targets, **kwargs)
+                else:
+                    attr = self.attr_func.attribute(inputs=inputs, target=targets, **kwargs)
+            
             if use_embedding:
                 attr_emb = attr[0]
                 attr = attr[1]
@@ -196,6 +242,8 @@ class AttributionManager():
                 if isinstance(attr, tuple):
                     attr = attr[0]
 
+            deltas_per_class.append(delta.detach())
+
             atts_per_class.append(attr.detach())
             if use_embedding:
                 atts_per_class_emb.append(attr_emb.detach().view(-1, 
@@ -203,24 +251,36 @@ class AttributionManager():
                                                                  self.n_feats_emb))
         
         atts_per_class = torch.stack(atts_per_class)
+        deltas_per_class = torch.stack(deltas_per_class)
         if use_embedding:
             atts_per_class_emb = torch.stack(atts_per_class_emb)
 
-        return atts_per_class, atts_per_class_emb
+        return atts_per_class, atts_per_class_emb, deltas_per_class
 
-    def _compute_attribute_true_class(self, input_batch, target_batch, use_embedding=False, **kwargs):
+    def _compute_attribute_true_class(self, 
+                                      input_batch, 
+                                      target_batch, 
+                                      use_embedding=False, 
+                                      **kwargs):
         """
         Only returns attributions where the target is the true class
         **kwargs passed directly to attr_func.attribute (e.g. n_steps=50)
         """
 
-        inputs = (input_batch.to(self.device)) if not use_embedding else (self.embedding.view(1,-1).repeat(input_batch.shape[0], 
-                                                                                               1).to(self.device), 
-                                                                          input_batch.to(self.device))
-
-        attr = self.attr_func.attribute(inputs=inputs,
-                                        target=target_batch.to(self.device),
-                                        **kwargs)
+        inputs = (input_batch.to(self.device)) if not use_embedding \
+        else (self.embedding.view(1,-1).repeat(input_batch.shape[0], 
+                                               1).to(self.device), 
+              input_batch.to(self.device))
+        
+        delta = None
+        if 'return_convergence_delta' in kwargs:
+            attr, delta = self.attr_func.attribute(inputs=inputs,
+                                            target=target_batch.to(self.device),
+                                            **kwargs)
+        else:
+            attr = self.attr_func.attribute(inputs=inputs,
+                                            target=target_batch.to(self.device),
+                                            **kwargs)
         #  if >1 outputs, keep only the first one (the attributions)
         if use_embedding:
             attr_emb = attr[0].view(-1, 
@@ -232,7 +292,7 @@ class AttributionManager():
                 attr = attr[0]
             attr_emb = None
         
-        return attr[None,:,:], attr_emb[None,:,:,:]
+        return attr[None,:,:], attr_emb[None,:,:,:], delta
 
     def _load_data(self):
         """
@@ -266,22 +326,28 @@ class AttributionManager():
                 self.attr_type = list(hf.keys())[0]
                 n_categories = hf[self.attr_type].shape[2]
 
-            avg_int_grads = torch.zeros((n_feats, 3, n_categories), dtype=torch.float32).to(self.device)
-            counts_int_grads = torch.zeros((n_feats, 3, n_categories), dtype=torch.int32).to(self.device)
-            ground_truth_mask = torch.eye(n_categories, n_categories, dtype=torch.int32).view(1, 1, n_categories, n_categories).to(self.device)
+            avg_int_grads = torch.zeros((n_feats, 3, n_categories), 
+                                        dtype=torch.float32).to(self.device)
+            counts_int_grads = torch.zeros((n_feats, 3, n_categories), 
+                                           dtype=torch.int32).to(self.device)
+            ground_truth_mask = torch.eye(n_categories, n_categories, 
+                                          dtype=torch.int32).view(1, 
+                                                                  1, 
+                                                                  n_categories, 
+                                                                  n_categories).to(self.device)
 
             with h5py.File(self.raw_attributions_file, 'r') as hf:
                 for i, dat in enumerate(self.genotypes_data):
-                    
+
                     dat = dat.to(self.device)
-                    
+
                     #  (n_feats, 1, n_categories)
                     int_grads = torch.tensor(hf[self.attr_type][i][:, None, :]).to(self.device)
 
                     #  (n_feats, 3)
                     snp_value_mask = torch.arange(3).view(1,3).to(self.device) == dat[:, None]
                     if use_true_class_only:
-                        ground_truth = self.data_generator.dataset.ys[i]
+                        ground_truth = self.data_generator.dataset.data_y[i]
                         #  mask now excludes values from incorrect class!
                         #  (n_feats, 3, n_categories)
                         snp_value_mask = (snp_value_mask[:, :, None])*ground_truth_mask[:,:,ground_truth]
