@@ -193,7 +193,7 @@ class ClassificationHandler():
             self.best_epoch_results['mean_loss'] = loss
 
         # Improvement if acc is same and actual loss is less than best loss
-        if ((loss < self.best_epoch_results['mean_loss']) & (acc == best_achieved_acc)):
+        if ((loss < self.best_epoch_results['mean_loss']) & (acc == self.best_epoch_results['mean_acc'])):
             has_improved = True
             # Update best loss
             self.best_epoch_results['mean_loss'] = loss
