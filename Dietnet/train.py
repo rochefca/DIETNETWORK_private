@@ -222,7 +222,7 @@ def main():
         
         batch_size = config['batch_size']
         fixed_train_generator = DataLoader(train_set, shuffle=False,
-                                           batch_size=batch_size, num_workers=0, drop_last=True)
+                                           batch_size=batch_size, num_workers=0, drop_last=False)
         for i,d in enumerate(fixed_train_generator):
             print('Batch:', i)
             print('file index:', d[2])
