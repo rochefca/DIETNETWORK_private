@@ -160,10 +160,11 @@ def main():
     print('---\n')
 
 
-
+## This function is not perfectly set for some cases
+# please use balancedsplit_nfold
 def balancedsplit(listofsample,
                   listoflabels,
-                  trainratio=0.8,
+                  trainratio=0.6,
                   validratio=0.2,
                   testratio=0.2,
                   nbfold=5):
@@ -208,6 +209,8 @@ def balancedsplit(listofsample,
         trainTOvalid=(trainTOvalid+1/nbfold)%1
     return(folds)
 
+
+#Please use only this one
 def balancedsplit_nfold(listofsample,listoflabels,nbfold):
     r=1/nbfold
     return(balancedsplit(listofsample,listoflabels,1-2*r,r,r,nbfold))
