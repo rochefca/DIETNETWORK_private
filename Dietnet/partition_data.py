@@ -162,6 +162,7 @@ def main():
 
 ## This function is not perfectly set for some cases
 # please use balancedsplit_nfold
+# some warnings may be add in cases of extreme values
 def balancedsplit(listofsample,
                   listoflabels,
                   trainratio=0.6,
