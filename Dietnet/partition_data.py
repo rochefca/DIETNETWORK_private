@@ -160,6 +160,62 @@ def main():
     print('---\n')
 
 
+
+def balancedsplit(listofsample,
+                  listoflabels,
+                  trainratio=0.8,
+                  validratio=0.2,
+                  testratio=0.2,
+                  nbfold=5):
+    
+    #check the some stuffs
+    if testratio+validratio+trainratio!=1:
+        print("testratio,validratio,trainratio should sum to 1")
+        return(1)
+    if len(listofsample)!=len(listoflabels):
+        print("listofsample and listofclass should have the same size")
+        return(1)
+    
+    #shuffle the samples and keep the classes in the same order
+    indexes=list(range(len(listofsample)))
+    np.random.shuffle(indexes)
+    listofsample=[listofsample[i] for i in indexes]
+    listoflabels=[listoflabels[i] for i in indexes]
+
+    #local function to take a slice of a list from a start end between 0 and 1
+    def getsegmentratio(l,start,end):
+        start=int(start*len(l))
+        end=int(end*len(l))
+        if(start<=end): return(l[start:end])
+        else:
+            return(l[start:]+l[:end])    
+
+    #we define 3 variable to define the 3 sets boundaries (between 0 and 1)
+    # - testTOtrain
+    # - trainTOvalid
+    # - validTOtest
+    trainTOvalid=np.random.random()
+    folds={}
+    for f in range(nbfold):
+        validTOtest=(trainTOvalid+validratio)%1
+        testTOtrain=(validTOtest+testratio)%1
+        folds[f]=[[],[],[]]
+        for lab in set(listoflabels):
+            subsamplelist=[sample for sample,label in zip(listofsample,listoflabels) if label==lab]
+            folds[f][0] += getsegmentratio( subsamplelist, testTOtrain,  trainTOvalid)
+            folds[f][1] += getsegmentratio( subsamplelist, trainTOvalid, validTOtest)
+            folds[f][2] += getsegmentratio( subsamplelist, validTOtest,  testTOtrain)
+        trainTOvalid=(trainTOvalid+1/nbfold)%1
+    return(folds)
+
+def balancedsplit_nfold(listofsample,listoflabels,nbfold):
+    r=1/nbfold
+    return(balancedsplit(listofsample,listoflabels,1-2*r,r,r,nbfold))
+        
+    
+    
+    
+
 def parse_args():
     parser = argparse.ArgumentParser(
             description=('Partition data into folds. This script creates an array '
