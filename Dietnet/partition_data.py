@@ -29,17 +29,15 @@ def get_samples_by_fold(samples, indices_byfold, nb_folds):
 
 
 # Function to perform unbalanced split of samples into folds
-def unbalanced_split(samples, nb_folds, train_valid_ratio, seed=123):
+def unbalanced_split(nsamples, nb_folds, train_valid_ratio, seed=123):
     ## Get indices of samples and shuffle them
-    indices = np.arange(len(samples))
-    indices = list(indices)
-
-    np.random.seed(seed)
+    indices = list(range(nsamples))
+    
     np.random.shuffle(indices)
 
     # Step and split positions for test sets in each fold
-    step = math.floor(len(indices) / nb_folds)
-    split_pos = [i for i in range(0, len(indices), step)]
+    step = math.floor(nsamples / nb_folds)
+    split_pos = [i for i in range(0, nsamples, step)]
 
     test_indices_byfold = []
     valid_indices_byfold = []
@@ -48,7 +46,7 @@ def unbalanced_split(samples, nb_folds, train_valid_ratio, seed=123):
 
     print(
         "\n---\nPartitioning indices of {} samples into {} folds\n---\n".format(
-            len(indices), nb_folds
+            nsamples, nb_folds
         )
     )
     # Get indices by set
@@ -58,13 +56,13 @@ def unbalanced_split(samples, nb_folds, train_valid_ratio, seed=123):
         test_indices_byfold.append(test_indices)
 
         # Nb of samples in train and valid sets
-        nb_train_and_valid = len(indices) - len(test_indices)
+        nb_train_and_valid = nsamples - len(test_indices)
         nb_train = math.floor(nb_train_and_valid * train_valid_ratio)
         nb_valid = nb_train_and_valid - nb_train
 
         # Valid set
-        valid_start = (test_start + len(test_indices)) % len(indices)
-        valid_end = (valid_start + nb_valid) % len(indices)
+        valid_start = (test_start + len(test_indices)) % nsamples
+        valid_end = (valid_start + nb_valid) % nsamples
 
         if valid_end > valid_start:
             valid_indices = indices[valid_start:valid_end]
@@ -75,7 +73,7 @@ def unbalanced_split(samples, nb_folds, train_valid_ratio, seed=123):
 
         # Train set
         train_start = valid_end
-        train_end = (valid_end + nb_train) % len(indices)
+        train_end = (valid_end + nb_train) % nsamples
 
         if train_end > train_start:
             train_indices = indices[train_start:train_end]
@@ -92,13 +90,13 @@ def unbalanced_split(samples, nb_folds, train_valid_ratio, seed=123):
     test_indices_byfold.append(test_indices)  # append last fold
 
     # Nb of samples in train and valid sets
-    nb_train_and_valid = len(indices) - len(test_indices)
+    nb_train_and_valid = nsamples - len(test_indices)
     nb_train = math.floor(nb_train_and_valid * train_valid_ratio)
     nb_valid = nb_train_and_valid - nb_train
 
     # Valid set
     valid_start = 0
-    valid_end = (valid_start + nb_valid) % len(indices)
+    valid_end = (valid_start + nb_valid) % nsamples
 
     if valid_end > valid_start:
         valid_indices = indices[valid_start:valid_end]
@@ -109,7 +107,7 @@ def unbalanced_split(samples, nb_folds, train_valid_ratio, seed=123):
 
     # Train set
     train_start = valid_end
-    train_end = (valid_end + nb_train) % len(indices)
+    train_end = (valid_end + nb_train) % nsamples
 
     if train_end > train_start:
         train_indices = indices[train_start:train_end]
@@ -125,7 +123,6 @@ def unbalanced_split(samples, nb_folds, train_valid_ratio, seed=123):
     ):
         indices_byfold.append([train_indices, valid_indices, test_indices])
 
-    samples_byfold = get_samples_by_fold(samples, indices_byfold, nb_folds)
 
     print("Created {} folds with the following number of samples".format(nb_folds))
     for i, fold_indices in enumerate(indices_byfold):
@@ -139,15 +136,13 @@ def unbalanced_split(samples, nb_folds, train_valid_ratio, seed=123):
         )
         print("***")
 
-    return indices_byfold, samples_byfold
+    return indices_byfold
 
 
 # Function to perform balanced split of samples into folds based on class labels
-def balanced_split(samples, labels, nb_folds=5, seed=123):
+def balanced_split(labels, nb_folds=5):
     ## Get indices of samples and shuffle them
-    indices = np.arange(len(samples))
-    indices = list(indices)
-    np.random.seed(seed)
+    indices = list(range(len(labels)))
     np.random.shuffle(indices)
 
     ## Reo
@@ -183,8 +178,6 @@ def balanced_split(samples, labels, nb_folds=5, seed=123):
         indices_byfold.append([train_indices, valid_indices, test_indices])
         trainTOvalid = (trainTOvalid + 1 / nb_folds) % 1
 
-    samples_byfold = get_samples_by_fold(samples, indices_byfold, nb_folds)
-
     print("Created {} folds with the following number of samples".format(nb_folds))
     for i, fold_indices in enumerate(indices_byfold):
         print("FOLD:", i)
@@ -197,7 +190,7 @@ def balanced_split(samples, labels, nb_folds=5, seed=123):
         )
         print("***")
 
-    return indices_byfold, samples_byfold
+    return indices_byfold
 
 
 """
@@ -216,7 +209,7 @@ def main():
     nb_folds = args.nb_folds
     # Train/valid ratio
     train_valid_ratio = args.train_valid_ratio
-    random_state = args.seed
+    np.random.seed(args.seed)
 
     # Get samples
     dataset_file = os.path.join(args.exp_path, args.dataset)
@@ -230,14 +223,16 @@ def main():
 
     if args.balance_class:
         print("balanced split")
-        indices_byfold, samples_byfold = balanced_split(
-            samples, labels, nb_folds, seed=random_state
+        indices_byfold = balanced_split(
+            labels, nb_folds
         )
     else:
         print("unbalanced split")
-        indices_byfold, samples_byfold = unbalanced_split(
-            samples, nb_folds, train_valid_ratio, seed=random_state
+        indices_byfold = unbalanced_split(
+            len(samples), nb_folds, train_valid_ratio
         )
+        
+    samples_byfold = get_samples_by_fold(samples, indices_byfold, nb_folds)
 
     # Saving results
     if args.out is not None:
