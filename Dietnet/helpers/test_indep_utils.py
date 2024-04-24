@@ -58,7 +58,7 @@ def match_input_features(genotypes, test_snps, train_snps):
             nb_ignored_features +=1
 
         if i % 1000 == 0 and i != 0:
-            print('Matched', str(i), 'of', str(test_snps.shape[0]), 'test input features')
+            print('Matched', str(i), 'of', str(test_snps.shape[0]), 'test input features',nb_matching_features/(nb_matching_features+nb_ignored_features)*100,'% match')
     
     print('Matched', str(test_snps.shape[0]), 'of',
             str(test_snps.shape[0]), 'input features')
