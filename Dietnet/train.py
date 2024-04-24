@@ -417,19 +417,19 @@ def main():
 
 
         # Write epoch predictions to file
-        """
-        train_filename = 'train_results_epoch'+str(epoch+1)
-        valid_filename = 'valid_results_epoch'+str(epoch+1)
+        if epoch%100==0:
+            train_filename = 'train_results_epoch'+str(epoch+1)
+            valid_filename = 'valid_results_epoch'+str(epoch+1)
 
-        train_fullpath = os.path.join(results_fullpath, train_filename)
-        valid_fullpath = os.path.join(results_fullpath, valid_filename)
+            train_fullpath = os.path.join(results_fullpath, train_filename)
+            valid_fullpath = os.path.join(results_fullpath, valid_filename)
 
-        model_handler.task_handler.save_predictions(
-                evaluated_train_results, train_fullpath)
+            model_handler.task_handler.save_predictions(
+                    evaluated_train_results, train_fullpath)
 
-        model_handler.task_handler.save_predictions(
-                valid_results, valid_fullpath)
-        """
+            model_handler.task_handler.save_predictions(
+                    valid_results, valid_fullpath)
+
 
         # Anneal learning rate
         for optimizer in model_handler.model.get_optimizers():
