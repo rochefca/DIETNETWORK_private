@@ -181,9 +181,6 @@ class ClassificationHandler():
         # Actual acc
         acc = results['n_right'].sum()/float(nb_samples)*100
 
-        # Best achieved accuracy
-        best_achieved_acc = self.best_epoch_results['mean_acc']
-
         # Improvement if actual acc is greater than best acc
         if acc > self.best_epoch_results['mean_acc']:
             has_improved = True
