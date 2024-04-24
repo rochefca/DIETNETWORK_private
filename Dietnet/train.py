@@ -62,8 +62,8 @@ def main():
     # Other args
     # --resume-training: continue training from last saved epoch
     # --param-init: PAS FONCTIONNEL DANS CETTE IMPLEM
-    # --comet-ml et --comet-ml-project-name : PAS SURE QUE ÇA FONCTIONNE ENCORE CETTE CHOSE
-    # --optimization : JE PENSE QUE C'ÉTAIT AVEC COMET
+    # --comet-ml et --comet-ml-project-name : PAS SURE QUE CA FONCTIONNE ENCORE CETTE CHOSE
+    # --optimization : JE PENSE QUE C'ETAIT AVEC COMET
     args = parse_args()
 
 
