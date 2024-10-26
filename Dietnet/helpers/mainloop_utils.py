@@ -88,6 +88,15 @@ def train_step(mod_handler,
     return task_handler.batches_results.copy()
 
 
+def apply_scale(x_batch, scale, shift, style='missing', vals_to_scale=None):
+    if style == 'missing':
+        return x_batch*scale
+    elif style == 'reference':
+        return x_batch - shift
+    else:
+        raise NotImplemented
+
+
 def eval_step(mod_handler, 
               device, 
               eval_dataset, 
@@ -97,7 +106,11 @@ def eval_step(mod_handler,
               normalize, 
               results_fullpath, 
               epoch, 
-              scale=1.0):
+              scale=1.0,
+              scale_style='all',
+              shift=0.0,
+              return_data=False,
+              return_intermediate_layers=False):
 
     task_handler = mod_handler.task_handler
 
@@ -106,6 +119,26 @@ def eval_step(mod_handler,
 
     # Batch start pos (to compile samples and labels)
     bstart = 0
+    
+    if return_data:
+        x_batches = []
+    
+    if return_intermediate_layers:
+        l1_list = []
+        l2_list = []
+        # a dict to store the activations
+        activation = {}
+        def getActivation(name):
+            # the hook signature
+            def hook(model, input, output):
+                activation[name] = output.detach()
+            return hook
+
+        # register forward hooks on the layers of choice
+        h1 = mod_handler.model.main_net.hidden_layers[0].register_forward_hook(getActivation('l1'))
+        h2 = mod_handler.model.main_net.bn[0].register_forward_hook(getActivation('l2'))
+
+    
     for batch, (x_batch, y_batch, samples) in enumerate(valid_generator):
         # Compile batch samples and labels
         bend = bstart + len(samples) # batch end pos
@@ -126,7 +159,15 @@ def eval_step(mod_handler,
             x_batch = du.normalize(x_batch, mus, sigmas)
         
         # The scaling does not affect missing values because they are 0
-        x_batch = x_batch*scale
+        if scale_style == 'all':
+            x_batch = x_batch*scale + shift
+        elif scale_style == 'pos_only':
+            x_batch = x_batch*((x_batch <= 0) + (x_batch > 0)*scale)  + shift
+        else:
+            raise Exception
+
+        if return_data:
+            x_batches.append(x_batch)
 
         # Forward pass
         model_out = mod_handler.model.forward(x_batch, 
@@ -134,6 +175,12 @@ def eval_step(mod_handler,
                                               epoch, 
                                               batch, 
                                               'valid')
+
+        # collect the activations in the correct list
+        if return_intermediate_layers:
+            l1_list.append(activation['l1'])
+            l2_list.append(activation['l2'])
+
         # Loss
         loss = task_handler.compute_loss(model_out,
                                          y_batch)
@@ -155,8 +202,144 @@ def eval_step(mod_handler,
 
         # Update batch start pos
         bstart = bend
+    
+    out_dict = task_handler.batches_results.copy()
+    if return_intermediate_layers:
+        # detach the hooks
+        h1.remove()
+        # add to the task handler return dictionary
+        out_dict['hidden_rep'] = np.concatenate(l2_list)
 
-    return task_handler.batches_results.copy()
+    if return_data:
+        return out_dict, torch.cat(x_batches, axis=0)
+    else:
+        return out_dict
+
+
+def eval_step(mod_handler, 
+              device, 
+              eval_dataset, 
+              valid_generator,
+              mus, 
+              sigmas, 
+              normalize, 
+              results_fullpath, 
+              epoch, 
+              scale=1.0,
+              scale_style='all',
+              shift=0.0,
+              return_data=False,
+              return_intermediate_layers=False):
+
+    task_handler = mod_handler.task_handler
+
+    # Reset to 0 batches results from previous epoch
+    task_handler.init_batches_results(eval_dataset, valid_generator)
+
+    # Batch start pos (to compile samples and labels)
+    bstart = 0
+    
+    if return_data:
+        x_batches = []
+    
+    if return_intermediate_layers:
+        l1_list = []
+        l2_list = []
+        # a dict to store the activations
+        activation = {}
+        def getActivation(name):
+            # the hook signature
+            def hook(model, input, output):
+                activation[name] = output.detach()
+            return hook
+
+        # register forward hooks on the layers of choice
+        h1 = mod_handler.model.main_net.hidden_layers[0].register_forward_hook(getActivation('l1'))
+        h2 = mod_handler.model.main_net.bn[0].register_forward_hook(getActivation('l2'))
+
+    
+    for batch, (x_batch, y_batch, samples) in enumerate(valid_generator):
+        # Compile batch samples and labels
+        bend = bstart + len(samples) # batch end pos
+        task_handler.batches_results['samples'][bstart:bend] = samples
+        task_handler.batches_results['ys'][bstart:bend] = y_batch
+
+        # Send data to device
+        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+        x_batch = x_batch.float()
+
+        y_batch = task_handler.format_ybatch(y_batch)
+
+        # Replace missing values : missing values (-1) become the SNP mean
+        du.replace_missing_values(x_batch, mus)
+
+        # Normalize (missing values become 0, because we substract the mean)
+        if normalize:
+            x_batch = du.normalize(x_batch, mus, sigmas)
+        
+        # The scaling does not affect missing values because they are 0
+        if scale_style == 'all':
+            x_batch = x_batch*scale + shift
+        elif scale_style == 'pos_only':
+            x_batch = x_batch*((x_batch <= 0) + (x_batch > 0)*scale)  + shift
+        else:
+            raise Exception
+
+        if return_data:
+            x_batches.append(x_batch)
+
+        # Forward pass
+        model_out = mod_handler.model.forward(x_batch, 
+                                              results_fullpath,
+                                              epoch, 
+                                              batch, 
+                                              'valid')
+
+        # collect the activations in the correct list
+        if return_intermediate_layers:
+            l1_list.append(activation['l1'])
+            l2_list.append(activation['l2'])
+
+        # Loss
+        loss = task_handler.compute_loss(model_out,
+                                         y_batch)
+
+        # Loss summed over all outputs (by default Pytorch returns mean loss
+        # computed over nb of outputs)
+        loss_wo_reduction = loss.item()*len(y_batch)
+
+        # Compile batch loss wo reduction
+        task_handler.batches_results['losses_wo_reduction'][batch] = \
+                loss_wo_reduction
+
+        # Compile batch predictions
+        if len(y_batch.shape) == 1:
+            # ignoring predictions, labels not provided.
+            task_handler.update_indep_test_batches_preds(model_out, 
+                                                         bstart, 
+                                                         bend, 
+                                                         batch)
+        else:
+            task_handler.update_batches_preds(model_out, 
+                                              y_batch, 
+                                              bstart, 
+                                              bend, 
+                                              batch)
+
+        # Update batch start pos
+        bstart = bend
+    
+    out_dict = task_handler.batches_results.copy()
+    if return_intermediate_layers:
+        # detach the hooks
+        h1.remove()
+        # add to the task handler return dictionary
+        out_dict['hidden_rep'] = np.concatenate(l2_list)
+
+    if return_data:
+        return out_dict, torch.cat(x_batches, axis=0)
+    else:
+        return out_dict
 
 
 def indep_test_step(mod_handler, device, test_dataset, test_generator,

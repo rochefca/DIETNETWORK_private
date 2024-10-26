@@ -93,7 +93,7 @@ def test():
                 matched_genotypes.shape[0], matched_genotypes.shape[1]))
 
         du.IndepTestDataset.data_x = matched_genotypes
-    
+
         # Saving the matched dataset
         filename = 'test_dataset_CAGv1_12063inds_173605snps_matchedto1000G.hdf5'
         print('Saving matched dataset to: {}'.format(filename))

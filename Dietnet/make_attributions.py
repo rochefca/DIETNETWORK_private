@@ -35,39 +35,36 @@ from Interpretability import attribution_manager as am
 # These generate multiple baselines, so have to be handled differently
 MULTI_BASELINE_LIST = ['random_sample', 'random_gen_sample', 
                        'random_gen_weighted_sample', 'random_gen_pop_weighted_sample',
-                       'random_sample_YRI', 'random_sample_CEU', 'random_sample_JPT']
+                       'random_sample_YRI', 'random_sample_CEUGBR', 'random_sample_JPT']
 
 def name_attr_corr_title(attr_method,
                           corruption_style,
                           attribution_score,
+                          attribution_to_load,
                           baseline_style,
                           fold,
                           baseline_sample_size=104,
                           random_baseline=False, 
+                          random_global_baseline=False,
                           reverse_baseline=False):
-    #title = '{} corruption={} {} bl={}'.format(attr_method,
-    #                                             corruption_style, 
-    #                                             attribution_score, 
-    #                                             baseline_style)
-    #if reverse_baseline:
-    #    title += ' -- rev bl'
-    #if random_baseline:
-    #    title += ' -- random bl'
     
-    results_filename_pre = 'snp_corr_exp_fold_'+str(fold) + \
-    '_'+str(attr_method) + \
-    '_'+str(corruption_style) + \
-    '_'+str(attribution_score)+ \
-    '_'+str(baseline_style)
+    results_filename_pre = 'sceexp_fold='+str(fold) + \
+    '_attrmethod='+str(attr_method) + \
+    '_corrstyle='+str(corruption_style) + \
+    '_attrscore='+str(attribution_score)+ \
+    '_attrload='+str(attribution_to_load)+ \
+    '_blstyle='+str(baseline_style)
 
     if random_baseline:
         results_filename_pre += '_random'
+    if random_global_baseline:
+        results_filename_pre += '_random_global'
     if reverse_baseline:
         results_filename_pre += '_reverse'
-    if (not random_baseline) and (not reverse_baseline):
+    if (not random_baseline) and (not reverse_baseline) and (not random_global_baseline):
         results_filename_pre += '_attrbased'
 
-    results_filename = results_filename_pre + '_'+str(baseline_sample_size) + '.txt' # dont include info about thresholds anymore!
+    results_filename = results_filename_pre + '_blssize='+str(baseline_sample_size) + '.txt'
     return results_filename
 
 def get_task_handler(task, dataset):
@@ -103,6 +100,9 @@ def load_data(fold,
     # Fold indices
     indices_byfold = np.load(partition, allow_pickle=True)
     fold_indices = indices_byfold['folds_indexes'][fold]
+    for i in range(len(fold_indices)):
+        fold_indices[i] = np.array(fold_indices[i], dtype=np.int32)
+    #fold_indices = fold_indices.astype(np.int32) # ensure int
 
     # Input features statistics
     inp_feat_stats = np.load(input_features_stats)
@@ -121,7 +121,7 @@ def load_data(fold,
     else:
         sigmas = None
         print('Loaded {} means of input features'.format(len(mus)))
-    
+
     # Dataset
     du.FoldDataset.dataset_file = dataset
     du.FoldDataset.f = h5py.File(du.FoldDataset.dataset_file, 'r')
@@ -145,24 +145,32 @@ def load_data(fold,
         dtype=np.int8)
 
     # ys
-    if task_handler is None:
-        # assume classification if not loading model!
-        du.FoldDataset.data_y = np.array(
-            du.FoldDataset.f['class_labels'],
-            dtype=np.int64)
-    else:
-        if du.FoldDataset.task_handler.name == 'regression':
-            du.FoldDataset.data_y = np.array(
-                du.FoldDataset.f['regression_labels'],
-                dtype=np.float32)
-
-        elif du.FoldDataset.task_handler.name == 'classification':
+    try:
+        if task_handler is None:
+            # assume classification if not loading model!
             du.FoldDataset.data_y = np.array(
                 du.FoldDataset.f['class_labels'],
                 dtype=np.int64)
+        else:
+            if du.FoldDataset.task_handler.name == 'regression':
+                du.FoldDataset.data_y = np.array(
+                    du.FoldDataset.f['regression_labels'],
+                    dtype=np.float32)
+
+            elif du.FoldDataset.task_handler.name == 'classification':
+                du.FoldDataset.data_y = np.array(
+                    du.FoldDataset.f['class_labels'],
+                    dtype=np.int64)
+    except:
+        # cannot load labels. Just put in dummy vals
+        print("No labels found! Adding Dummy values!")
+        du.FoldDataset.data_y = np.zeros(
+                du.FoldDataset.f['inputs'].shape[0],
+                dtype=np.int64)
 
     # samples : the fold indexes
-    du.FoldDataset.data_samples = np.array(fold_indices[0]+fold_indices[1]+fold_indices[2])
+    #du.FoldDataset.data_samples = np.array(fold_indices[0]+fold_indices[1]+fold_indices[2])
+    du.FoldDataset.data_samples = np.concatenate([fold_indices[0], fold_indices[1], fold_indices[2]])
 
     # What subset of data will we use
     if mode == 'test':
@@ -172,9 +180,11 @@ def load_data(fold,
     elif mode == 'valid':
         subset = fold_indices[1]
     elif mode == 'train+valid':
-        subset = fold_indices[0] + fold_indices[1]
+        #subset = fold_indices[0] + fold_indices[1]
+        subset = np.concatenate([fold_indices[0], fold_indices[1]])
     else:
-        subset = fold_indices[0] + fold_indices[1] + fold_indices[2]
+        #subset = fold_indices[0] + fold_indices[1] + fold_indices[2]
+        subset = np.concatenate([fold_indices[0], fold_indices[1], fold_indices[2]])
     test_set = du.FoldDataset(subset)
 
     #print('Loaded train ({} samples), valid ({} samples) and '
@@ -259,8 +269,6 @@ def get_highest_entropy_datapoint(fold,
                                   task_handler,
                                   config,
                                   device,
-                                  mus,
-                                  sigmas,
                                   model_handler):
     du, test_set, fold_indices, mus, sigmas = load_data(fold,
                                                         partition,
@@ -329,9 +337,8 @@ def make_baseline(mus,
                                                  task_handler,
                                                  config,
                                                  device,
-                                                 mus,
-                                                 sigmas,
                                                  model_handler).reshape(1,-1)
+        
     elif kind == 'random_gen':
         # generates a random genotype to use as baseline
         # 0,1,2 has equal probability        
@@ -359,8 +366,8 @@ def make_baseline(mus,
         # this one generates multiple random baselines (weighted)
         categories = np.unique(du.FoldDataset.data_y)
         assert sample_size <= (len(du.FoldDataset.data_x) - len(train_valid_set_labels)), 'Sample size requested is > then number of test points!'
-        assert sample_size % categories  == 0, 'sample size not a multiple of  number of categories'
-        sample_size_per_pop = sample_size // categories
+        assert sample_size % len(categories)  == 0, 'sample size not a multiple of  number of categories'
+        sample_size_per_pop = sample_size // len(categories)
         for label in categories:
             subset = du.FoldDataset.data_x[du.FoldDataset.data_y==label]
             ps = compute_allele_freqs(subset)
@@ -380,7 +387,7 @@ def make_baseline(mus,
         baseline = train_valid_set[np.random.choice(indices, 
                                                     sample_size, 
                                                     replace=False)]
-    elif kind == 'random_sample_CEU':
+    elif kind == 'random_sample_CEUGBR':
         indices = np.arange(len(train_valid_set_labels))[train_valid_set_labels == 4]
         baseline = train_valid_set[np.random.choice(indices, 
                                                     sample_size, 
@@ -438,7 +445,8 @@ def name_attr_file(attr_method, baseline_style, baseline_sample_size, agg):
     if baseline_style in MULTI_BASELINE_LIST:
         return '{}_{}_{}_{}.h5'.format(prefix, attr_method, baseline_style, baseline_sample_size)
     else:
-        return '{}_{}_{}.h5'.format(prefix, attr_method, baseline_style)
+        #'{}_{}_{}.h5'.format(prefix, attr_method, baseline_style)
+        return '{}_{}_{}_{}.h5'.format(prefix, attr_method, baseline_style, baseline_sample_size) # typo where all baselines have the sample size on it!
         
 
 def main():
@@ -572,8 +580,8 @@ def main():
     baseline = make_baseline(mus.cpu().numpy(), 
                              sigmas.cpu().numpy(), 
                              args.normalize,
-                             genotypes_data_tv[fold_indices[0]+fold_indices[1]],
-                             test_set.data_y[fold_indices[0]+fold_indices[1]],
+                             genotypes_data_tv[np.concatenate([fold_indices[0], fold_indices[1]])],  #genotypes_data_tv[fold_indices[0]+fold_indices[1]],
+                             test_set.data_y[np.concatenate([fold_indices[0], fold_indices[1]])], #test_set.data_y[fold_indices[0]+fold_indices[1]],
                              args.baseline_style,
                              args.which_fold, 
                              args.partition,
@@ -597,7 +605,7 @@ def main():
     attr_manager.set_data_generator(test_generator)
 
     attr_manager.set_genotypes_data(torch.from_numpy(genotypes_data))
-    
+
     fname_file = name_attr_file(args.attr_method, args.baseline_style, args.baseline_sample_size, agg=False)
     attr_manager.set_raw_attributions_file(os.path.join(out_dir, fname_file))
 
@@ -617,13 +625,18 @@ def main():
                       'baselines': baseline,
                       'feature_mask': feature_mask}
     elif args.attr_method == 'DeepLift':
-        attrs_args = {}
+        attrs_args = {'baselines': baseline}
     elif args.attr_method == 'Lime':
         # make feature mask for permutation based methods
         feature_mask = make_feature_mask(test_set, how='equal_space')
         attrs_args = {'show_progress': True,
                       'baselines': baseline,
                       'feature_mask': feature_mask}
+    elif args.attr_method == 'GradientShap':
+        attrs_args = {'baselines': baseline,
+                      'n_samples': 5,
+                      'stdevs': 0.0,
+                      'return_convergence_delta': False}
 
     attr_manager.create_raw_attributions(False,
                                          only_true_labels=False, # remove attrs w.r.t. incorrect labels next step!
@@ -670,7 +683,7 @@ def parse_args():
     parser.add_argument(
             '--attr-method',
             type=str,
-            choices=['int_grad', 'saliency', 'feat_ablation', 'DeepLift', 'Lime'],
+            choices=['int_grad', 'GradientShap', 'saliency', 'feat_ablation', 'DeepLift', 'Lime'],
             default='int_grad',
             help='Attribution Method to use. Default: %(default)s'
             )
@@ -683,7 +696,7 @@ def parse_args():
                      'random_gen_sample', 'random_gen_weighted_sample', 
                      'random_gen_pop_weighted_sample',
                      'random_sample_YRI', 
-                     'random_sample_CEU', 'random_sample_JPT'],
+                     'random_sample_CEUGBR', 'random_sample_JPT'],
             default='reference',
             help='Should baseline be all reference or all missing. Default: %(default)s'
             )
@@ -763,7 +776,7 @@ def parse_args():
 
     # Number of Baselines to Use (When using Multiple)
     parser.add_argument(
-            '--baseline_sample_size',
+            '--baseline-sample-size',
             type=int,
             default=104,
             help='Number of baseline to use (when using multiple baselines). Default: %(default)i'

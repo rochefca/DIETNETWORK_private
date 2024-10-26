@@ -79,6 +79,8 @@ class AttributionManager():
             self.attr_func = engine.DeepLift(self.model, **kwargs)
         elif attr_type == 'Lime':
             self.attr_func = engine.Lime(self.model, **kwargs)
+        elif attr_type == 'GradientShap':
+            self.attr_func = engine.GradientShap(self.model, **kwargs)
         else:
             raise NotImplementedError
 
@@ -141,7 +143,7 @@ class AttributionManager():
                 if only_true_labels:
                     n_categories = 1
                 hf.create_dataset(self.attr_type, shape=[n_samples, n_feats, n_categories])
-                if 'return_convergence_delta' in kwargs:
+                if 'return_convergence_delta' in kwargs and kwargs['return_convergence_delta']:
                     hf.create_dataset(self.attr_type+'_deltas', shape=[n_samples, n_categories])
 
                 #  include additional dataset of attributions for the embedding
@@ -168,7 +170,7 @@ class AttributionManager():
                                                                                         use_embedding,
                                                                                         **kwargs)
                         #  make sure you are on CPU when copying to hf object
-                        if 'return_convergence_delta' in kwargs:
+                        if 'return_convergence_delta' in kwargs and kwargs['return_convergence_delta']:
                             hf[self.attr_type+'_deltas'][idx:idx+len(x_batch)] = deltas.permute(1,0).cpu().numpy()
 
                         hf[self.attr_type][idx:idx+len(x_batch)] = attr.permute(1,2,0).cpu().numpy()
@@ -206,13 +208,14 @@ class AttributionManager():
         for label in label_names:
             targets = torch.empty(input_batch.shape[0]).fill_(label).to(self.device).long()
             
-            assert 'baselines' in kwargs # make sure you have baselines defined!
-            if len(kwargs['baselines']) > 1:
+            #assert 'baselines' in kwargs # make sure you have baselines defined!
+            #if len(kwargs['baselines']) > 1:
+            if 'baselines' in kwargs:
                 attrs_baselines, deltas_baselines = [], []
                 kwargs_sans_bl = copy.deepcopy(kwargs)
                 baselines = kwargs_sans_bl.pop('baselines')
                 for baseline in baselines:
-                    if 'return_convergence_delta' in kwargs:
+                    if 'return_convergence_delta' in kwargs and kwargs['return_convergence_delta']:
                         attr, delta = self.attr_func.attribute(inputs=inputs, 
                                                                target=targets, 
                                                                baselines=baseline.view(1,-1),
@@ -225,15 +228,16 @@ class AttributionManager():
                                                         **kwargs_sans_bl)
                     attrs_baselines.append(attr)
 
-                delta = torch.stack(deltas_baselines).mean(0)
+                if 'return_convergence_delta' in kwargs and kwargs['return_convergence_delta']:
+                    delta = torch.stack(deltas_baselines).mean(0)
                 attr = torch.stack(attrs_baselines).mean(0)
             else:
-                if 'return_convergence_delta' in kwargs:
+                if 'return_convergence_delta' in kwargs and kwargs['return_convergence_delta']:
                     #  don't pass args which produce other outputs (other then return_convergence_delta for int_grad)
                     attr, delta = self.attr_func.attribute(inputs=inputs, target=targets, **kwargs)
                 else:
                     attr = self.attr_func.attribute(inputs=inputs, target=targets, **kwargs)
-            
+
             if use_embedding:
                 attr_emb = attr[0]
                 attr = attr[1]
@@ -242,16 +246,21 @@ class AttributionManager():
                 if isinstance(attr, tuple):
                     attr = attr[0]
 
-            deltas_per_class.append(delta.detach())
+            if 'return_convergence_delta' in kwargs and kwargs['return_convergence_delta']:
+                deltas_per_class.append(delta.detach())
 
             atts_per_class.append(attr.detach())
             if use_embedding:
                 atts_per_class_emb.append(attr_emb.detach().view(-1, 
                                                                  self.embedding.shape[0], 
                                                                  self.n_feats_emb))
-        
+
         atts_per_class = torch.stack(atts_per_class)
-        deltas_per_class = torch.stack(deltas_per_class)
+        if 'return_convergence_delta' in kwargs and kwargs['return_convergence_delta']:
+            deltas_per_class = torch.stack(deltas_per_class)
+        else:
+            deltas_per_class = None
+
         if use_embedding:
             atts_per_class_emb = torch.stack(atts_per_class_emb)
 
@@ -273,7 +282,7 @@ class AttributionManager():
               input_batch.to(self.device))
         
         delta = None
-        if 'return_convergence_delta' in kwargs:
+        if 'return_convergence_delta' in kwargs and kwargs['return_convergence_delta']:
             attr, delta = self.attr_func.attribute(inputs=inputs,
                                             target=target_batch.to(self.device),
                                             **kwargs)
