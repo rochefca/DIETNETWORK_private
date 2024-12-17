@@ -62,8 +62,8 @@ def main():
     # Other args
     # --resume-training: continue training from last saved epoch
     # --param-init: PAS FONCTIONNEL DANS CETTE IMPLEM
-    # --comet-ml et --comet-ml-project-name : PAS SURE QUE ÇA FONCTIONNE ENCORE CETTE CHOSE
-    # --optimization : JE PENSE QUE C'ÉTAIT AVEC COMET
+    # --comet-ml et --comet-ml-project-name : PAS SURE QUE CA FONCTIONNE ENCORE CETTE CHOSE
+    # --optimization : JE PENSE QUE C'ETAIT AVEC COMET
     args = parse_args()
 
 
@@ -222,7 +222,7 @@ def main():
         
         batch_size = config['batch_size']
         fixed_train_generator = DataLoader(train_set, shuffle=False,
-                                           batch_size=batch_size, num_workers=0, drop_last=True)
+                                           batch_size=batch_size, num_workers=0, drop_last=False)
         for i,d in enumerate(fixed_train_generator):
             print('Batch:', i)
             print('file index:', d[2])
@@ -271,7 +271,7 @@ def main():
     # Batch generators
     batch_size = config['batch_size']
     train_generator = DataLoader(train_set, shuffle=True,
-            batch_size=batch_size, num_workers=0, drop_last=True)
+            batch_size=batch_size, num_workers=0, drop_last=False)
 
     valid_generator = DataLoader(valid_set,
             batch_size=batch_size, shuffle=False, num_workers=0)
@@ -417,19 +417,19 @@ def main():
 
 
         # Write epoch predictions to file
-        """
-        train_filename = 'train_results_epoch'+str(epoch+1)
-        valid_filename = 'valid_results_epoch'+str(epoch+1)
+        if epoch%100==0:
+            train_filename = 'train_results_epoch'+str(epoch+1)
+            valid_filename = 'valid_results_epoch'+str(epoch+1)
 
-        train_fullpath = os.path.join(results_fullpath, train_filename)
-        valid_fullpath = os.path.join(results_fullpath, valid_filename)
+            train_fullpath = os.path.join(results_fullpath, train_filename)
+            valid_fullpath = os.path.join(results_fullpath, valid_filename)
 
-        model_handler.task_handler.save_predictions(
-                evaluated_train_results, train_fullpath)
+            model_handler.task_handler.save_predictions(
+                    evaluated_train_results, train_fullpath)
 
-        model_handler.task_handler.save_predictions(
-                valid_results, valid_fullpath)
-        """
+            model_handler.task_handler.save_predictions(
+                    valid_results, valid_fullpath)
+
 
         # Anneal learning rate
         for optimizer in model_handler.model.get_optimizers():

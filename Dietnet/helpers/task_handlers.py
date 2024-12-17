@@ -169,6 +169,7 @@ class ClassificationHandler():
         self.best_epoch_results['mean_acc'] = results['mean_acc']
 
 
+    #This function is not valid when drop_last=True
     def update_best_results(self, results):
         has_improved = False
 
@@ -180,17 +181,16 @@ class ClassificationHandler():
         # Actual acc
         acc = results['n_right'].sum()/float(nb_samples)*100
 
-        # Best achieved accuracy
-        best_achieved_acc = self.best_epoch_results['mean_acc']
-
         # Improvement if actual acc is greater than best acc
         if acc > self.best_epoch_results['mean_acc']:
             has_improved = True
             # Update best acc
             self.best_epoch_results['mean_acc'] = acc
+            # Update best loss
+            self.best_epoch_results['mean_loss'] = loss
 
         # Improvement if acc is same and actual loss is less than best loss
-        if ((loss < self.best_epoch_results['mean_loss']) & (acc == best_achieved_acc)):
+        if ((loss < self.best_epoch_results['mean_loss']) & (acc == self.best_epoch_results['mean_acc'])):
             has_improved = True
             # Update best loss
             self.best_epoch_results['mean_loss'] = loss
