@@ -15,3 +15,6 @@ DATA/
 EXPERIMENT_01/
 Test_dev/
 Dietnet/tests/filenames.py
+
+# Model weights
+Models_1KGP_24populations/
