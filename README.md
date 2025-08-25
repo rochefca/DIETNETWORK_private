@@ -1,17 +1,41 @@
-# DIETNETWORK
+# Diet Network
 
-Pytorch implementation of DietNetwork (https://arxiv.org/abs/1611.09340)
+Pytorch implementation of Diet Network (https://arxiv.org/abs/1611.09340) 
 
-## Files
-- **Genotype**: File of samples and their genotypes (genotypes = {0,1,2}, additive encoding) in tab-separated format. One sample per line, first column are sample ids and other columns are samples genotypes for every SNPs. Missing genotypes can be encoded with *NA*, *./.* or *-1*.
-- **Labels**: Samples and their labels in tab-separated format. One sample per line, first column are sample ids followed by their label.
-    - **Class labels**: used to compute the embedding (in classification and regression tasks) and used as prediction in classification task
-    - **Regression labels**: used as prediction in regression task 
-- **Config**
+## Diet Network for genetic ancestry inference
+Trained models and supporting files for genetic ancestry prediction are available on Zenodo (https://doi.org/10.5281/zenodo.16943453). The models are trained to classify individuals into 24 populations using the Thousand Genomes Project dataset. For more details on the models and their evaluation see *A Transparent and Generalizable Deep Learning Framework for Genomic Ancestry Prediction* paper. The Zenodo contains : 
+
+- Trained model weights: trainedmodels_modelweights.tar.gz
+- Supporting files: trainedmodels_supportingfiles.tar.gz
+- Training data: training_data.tar.gz
+
 
 ## Usage
 
-### Create Dataset
+### Using the trained models for genetic ancestry inference
+Download the pretrained weights and supporting files from Zenodo, then:
+
+```
+python test_independent_dataset.py \
+--model-params trainedmodels_modelweights/model_rep{1-3}_fold{0-4}.pt \
+--train-dataset trainedmodels_supportingfiles/training_dataset_info.hdf5 \
+--normalize \
+--test-path <your_test_directory> \
+--test-name <your_test_name> \
+--test-dataset <your_hdf5_test_dataset> \
+--config trainedmodels_supportingfiles/config_rep{1-3}models.yaml \
+--task classification \
+--input-features-stats trainedmodels_supportingfiles/normalization_stats.npz \
+--embedding trainedmodels_supportingfiles/SNPs_embedding.npz \
+--which-fold {0-4}
+```
+
+### Training models from scratch
+
+### Training Diet Network on another task
+The Diet Network code availbale here can be use on another genetic prediction task (classification or regression). Steps below indicate how to create the files to train such models.
+
+#### Create Dataset
 Create a hdf5 dataset from genotype and label files.
 ```
 python create_dataset --help
@@ -60,7 +84,7 @@ python create_dataset.py \
     --regression-labels <regression_labels_file>
 ```
 
-### Partition data
+#### Partition data
 Partition samples into folds and split each fold into train and validation sets. This is done before training, because embeddings are computed on each fold.
 
 ```
@@ -90,7 +114,7 @@ optional arguments:
                         partition_datasetFilename_date
 ```
 
-### Compute input features statistics
+#### Compute input features statistics
 Computes mean and standard deviation of every input feature (SNP). The means and standard deviations are computed by fold, on samples of the training set. The mean is used to replace missing values (missing genotypes) and mean+standard deviation are used to normalize input features at training time.
 
 ```
@@ -122,7 +146,7 @@ optional arguments:
                         input_features_stats_datasetFilename_date
 ```
 
-### Generate embedding
+#### Generate embedding
 Compute classes genotype frequencies embedding by using samples of the training set.
 
 ```
@@ -152,3 +176,10 @@ optional arguments:
                         the file will be named
                         genotype_class_freq_embedding_datasetFilename_date
 ```
+
+## Files
+- **Genotype**: File of samples and their genotypes (genotypes = {0,1,2}, additive encoding) in tab-separated format. One sample per line, first column are sample ids and other columns are samples genotypes for every SNPs. Missing genotypes can be encoded with *NA*, *./.* or *-1*.
+- **Labels**: Samples and their labels in tab-separated format. One sample per line, first column are sample ids followed by their label.
+    - **Class labels**: used to compute the embedding (in classification and regression tasks) and used as prediction in classification task
+    - **Regression labels**: used as prediction in regression task 
+- **Config**
