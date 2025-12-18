@@ -34,7 +34,8 @@ def get_preprocessing_params():
         train_indexes = np.sort(fold_indexes[0]) # sort is a hdf5 requirement
         x_train = data['inputs'][train_indexes]
 
-        #x_train = torch.from_numpy(x_train)
+        # Convert to torch tensor
+        x_train = torch.from_numpy(x_train.astype(np.float32))
 
         if args.parallel_loading:
             # Compute mean of every features in parallel

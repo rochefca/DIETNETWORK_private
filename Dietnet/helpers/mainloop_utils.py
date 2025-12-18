@@ -4,8 +4,8 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 
-from helpers import model
-from helpers import dataset_utils as du
+from Dietnet.helpers import model
+from Dietnet.helpers import dataset_utils as du
 
 
 def train_step(comb_model, device, optimizer, train_generator,

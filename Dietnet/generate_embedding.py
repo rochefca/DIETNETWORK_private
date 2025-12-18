@@ -20,6 +20,13 @@ def generate_embedding():
 def generate_embedding_with_args(args):
     start_time = time.time()
 
+    # Set label field based on task type
+    if hasattr(args, 'task'):
+        if args.task == 'classification':
+            args.emb_class_label = 'class_labels'
+        elif args.task == 'regression':
+            args.emb_class_label = 'regression_labels'
+
     # Data
     data = h5py.File(os.path.join(args.exp_path,args.dataset))
     folds_indexes = du.load_folds_indexes(
@@ -162,6 +169,14 @@ def parse_args():
             type=str,
             default='embedding.npz',
             help='Filename for returned embedding. Default: %(default)s'
+            )
+
+    parser.add_argument(
+            '--task',
+            type=str,
+            choices=['classification', 'regression'],
+            default='classification',
+            help='Task type: classification or regression. Default: %(default)s'
             )
 
     return parser.parse_args()
