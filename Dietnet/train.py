@@ -16,10 +16,10 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
-import helpers.dataset_utils as du
-import helpers.model as model
-import helpers.mainloop_utils as mlu
-import helpers.log_utils as lu
+from Dietnet.helpers import dataset_utils as du
+from Dietnet.helpers import model
+from Dietnet.helpers import mainloop_utils as mlu
+from Dietnet.helpers import log_utils as lu
 
 
 def main():

@@ -11,7 +11,7 @@ import numpy as np
 
 import h5py
 
-import helpers.dataset_utils as du
+from Dietnet.helpers import dataset_utils as du
 
 
 def create_dataset():

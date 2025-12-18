@@ -8,10 +8,10 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-import helpers.test_external_utils as tu
-import helpers.dataset_utils as du
-import helpers.model as model
-import helpers.mainloop_utils as mlu
+from Dietnet.helpers import test_external_utils as tu
+from Dietnet.helpers import dataset_utils as du
+from Dietnet.helpers import model
+from Dietnet.helpers import mainloop_utils as mlu
 
 
 def test():

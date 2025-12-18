@@ -9,7 +9,7 @@ import h5py
 
 import torch
 
-import helpers.dataset_utils as du
+from Dietnet.helpers import dataset_utils as du
 
 
 def get_preprocessing_params():
