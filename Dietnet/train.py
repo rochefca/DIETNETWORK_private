@@ -9,22 +9,32 @@ import h5py
 
 import numpy as np
 
-from comet_ml import Experiment, Optimizer
+# Optional comet_ml for experiment tracking
+try:
+    from comet_ml import Experiment, Optimizer
+    COMET_AVAILABLE = True
+except ImportError:
+    COMET_AVAILABLE = False
+    Experiment = None
+    Optimizer = None
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
-import helpers.dataset_utils as du
-import helpers.model as model
-import helpers.mainloop_utils as mlu
-import helpers.log_utils as lu
+from Dietnet.helpers import dataset_utils as du
+from Dietnet.helpers import model
+from Dietnet.helpers import mainloop_utils as mlu
+from Dietnet.helpers import log_utils as lu
 
 
 def main():
     args = parse_args()
+    main_with_args(args)
 
+
+def main_with_args(args):
     # Create dir where training info will be saved
     """
     The directory will be created in exp_path/exp_name with the name
@@ -77,7 +87,8 @@ def main():
     exp_name = 'model_params' \
             + '_epochs_' + str(config['params']['epochs']) \
             + '_inpdrop_' + str(config['params']['input_dropout']) \
-            + '_lr_' + str(config['params']['learning_rate']) \
+            + '_lr_aux_' + str(config['params']['lr_aux']) \
+            + '_lr_main_' + str(config['params']['lr_main']) \
             + '_lra_' + str(config['params']['learning_rate_annealing']) \
             + '_auxu_' \
                 + str(config['params']['nb_hidden_u_aux'])[1:-1].replace(', ','_') \
@@ -107,7 +118,8 @@ def train(config, comet_log, comet_project_name, optimization_exp):
             + '_mainu_' \
                 + str(config['params']['nb_hidden_u_aux'][-1]) + '_' \
                 + str(config['params']['nb_hidden_u_main'])[1:-1].replace(', ','_') \
-            + '_lr_' + str(config['params']['learning_rate']) \
+            + '_lr_aux_' + str(config['params']['lr_aux']) \
+            + '_lr_main_' + str(config['params']['lr_main']) \
             + '_lra_' + str(config['params']['learning_rate_annealing']) \
             + '_epochs_' + str(config['params']['epochs']) \
             + '_patience_' + str(config['params']['patience']) \
@@ -118,25 +130,30 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     #               COMET PROJECT
     # ----------------------------------------
     if comet_log:
-        # Init experiment
-        if comet_project_name is None:
-            experiment = Experiment(auto_histogram_weight_logging=True)
-
+        if not COMET_AVAILABLE:
+            print("WARNING: comet_ml not available. Install with: uv pip install comet-ml")
+            print("Continuing without experiment tracking...")
+            comet_log = False
         else:
-            experiment = Experiment(
-                project_name=comet_project_name,
-                auto_metric_logging=False,
-                parse_args=False
+            # Init experiment
+            if comet_project_name is None:
+                experiment = Experiment(auto_histogram_weight_logging=True)
+
+            else:
+                experiment = Experiment(
+                    project_name=comet_project_name,
+                    auto_metric_logging=False,
+                    parse_args=False
                 )
 
-        # Set experiment name
-        experiment.set_name(exp_identifier)
+            # Set experiment name
+            experiment.set_name(exp_identifier)
 
-        # Log hyperparams
-        experiment.log_parameters(config['params'])
+            # Log hyperparams
+            experiment.log_parameters(config['params'])
 
-        # Log specifics
-        experiment.log_others(config['specifics'])
+            # Log specifics
+            experiment.log_others(config['specifics'])
 
     # ----------------------------------------
     #               SET DEVICE
@@ -168,12 +185,16 @@ def train(config, comet_log, comet_project_name, optimization_exp):
         config['specifics']['input_features_means'])
         )
 
-    mus = input_features_means['means_by_fold'][config['params']['fold']]
-    #sigmas = preprocess_params['sd_by_fold'][config['params']['fold']]
-    sigmas = None
+    # Extract means and standard deviations for this fold
+    # means_by_fold has shape [n_folds, 2, n_features] where index 0 is means, 1 is sds
+    fold_stats = input_features_means['means_by_fold'][config['params']['fold']]
+    mus = fold_stats[0]  # Extract means
+    sigmas = fold_stats[1] if config['specifics']['normalize'] else None  # Extract sds
 
-    # Send mus and sigmans to device
+    # Send mus and sigmas to device
     mus = torch.from_numpy(mus).float().to(device)
+    if sigmas is not None:
+        sigmas = torch.from_numpy(sigmas).float().to(device)
     #sigmas = torch.from_numpy(sigmas).float().to(device)
 
     # ----------------------------------------
@@ -199,6 +220,9 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
     du.FoldDataset.dataset_file = dataset_file
     du.FoldDataset.f = h5py.File(du.FoldDataset.dataset_file, 'r')
+
+    # Set task type
+    du.FoldDataset.task = config['specifics']['task']
 
     # Label conversion depending on task
     if config['specifics']['task'] == 'classification':
@@ -248,7 +272,11 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     # Main net output size (nb targets)
     if config['specifics']['task'] == 'classification':
         with h5py.File(dataset_file, 'r') as f:
-            n_targets = len(f['label_names'])
+            # Try class_label_names first (new format), fall back to label_names
+            if 'class_label_names' in f:
+                n_targets = len(f['class_label_names'])
+            else:
+                n_targets = len(f['label_names'])
     elif config['specifics']['task'] == 'regression':
         n_targets = 1
 
@@ -293,9 +321,11 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
     print('For loss we use:', criterion)
 
-    # Optimizer
-    lr = config['params']['learning_rate']
-    optimizer = torch.optim.Adam(comb_model.parameters(), lr=lr)
+    # Optimizer with separate learning rates for auxiliary and main networks
+    optimizer = torch.optim.Adam([
+        {'params': comb_model.feat_emb.parameters(), 'lr': config['params']['lr_aux']},
+        {'params': comb_model.disc_net.parameters(), 'lr': config['params']['lr_main']}
+    ])
 
     # Max nb of epochs
     n_epochs = config['params']['epochs']
@@ -556,7 +586,11 @@ def train(config, comet_log, comet_project_name, optimization_exp):
         print('Saving results', flush=True)
         if config['specifics']['task'] == 'classification':
             with h5py.File(dataset_file, 'r') as f:
-                label_names = np.array(f['label_names']).astype(np.str_)
+                # Try class_label_names first (new format), fall back to label_names
+                if 'class_label_names' in f:
+                    label_names = np.array(f['class_label_names']).astype(np.str_)
+                else:
+                    label_names = np.array(f['label_names']).astype(np.str_)
 
             lu.save_results(config['specifics']['out_dir'],
                     test_samples, test_ys, label_names,

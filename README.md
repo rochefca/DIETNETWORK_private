@@ -1,6 +1,102 @@
 # DIETNETWORK
 
-Pytorch implementation of DietNetwork (https://arxiv.org/abs/1611.09340)
+PyTorch implementation of DietNetwork (https://arxiv.org/abs/1611.09340) for genetic ancestry classification.
+
+## Installation
+
+### Using uv (recommended)
+
+```bash
+# Install uv if you haven't already
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Clone the repository
+git clone https://github.com/rochefca/DIETNETWORK.git
+cd DIETNETWORK
+
+# Create virtual environment and install package
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+uv pip install -e .
+
+# Verify installation
+dietnet info
+```
+
+### Using pip
+
+```bash
+# Create virtual environment
+python -m venv .venv
+source .venv/bin/activate
+
+# Install package
+pip install -e .
+```
+
+### Optional dependencies
+
+```bash
+# For interpretability features
+uv pip install -e ".[interpretability]"
+
+# For experiment tracking with Comet.ML
+uv pip install -e ".[tracking]"
+
+# For development
+uv pip install -e ".[dev]"
+```
+
+## Quick Start
+
+### Complete workflow
+
+```bash
+# 1. Create dataset from genotype and label files
+dietnet create-dataset \
+    --genotypes data/snps.txt \
+    --labels data/labels.txt \
+    --output-dir ./processed
+
+# 2. Partition into cross-validation folds
+dietnet partition \
+    --exp-path ./processed \
+    --nb-folds 5
+
+# 3. Generate genotype frequency embeddings
+dietnet generate-embedding \
+    --exp-path ./processed
+
+# 4. Train model on a specific fold
+dietnet train \
+    --exp-path ./processed \
+    --exp-name experiment1 \
+    --which-fold 0 \
+    --config config.yaml
+
+# 5. Run predictions on external data
+dietnet predict \
+    --test-dataset test.hdf5 \
+    --train-dataset ./processed/dataset.hdf5 \
+    --config ./processed/experiment1/config.yaml \
+    --embedding ./processed/embedding.npz \
+    --input-features-stats ./processed/input_features_means.npz \
+    --model-params ./processed/experiment1/best_model.pt \
+    --output-dir ./results \
+    --which-fold 0
+```
+
+### Get help
+
+```bash
+# General help
+dietnet --help
+
+# Command-specific help
+dietnet train --help
+dietnet predict --help
+```
+
 ## Training pipeline
 
 ![code_wf](Images/dn_workflow.png)
@@ -52,11 +148,18 @@ Pytorch implementation of DietNetwork (https://arxiv.org/abs/1611.09340)
 - [x] Test for out-of-sample data
 - [x] Save model params, results
 
-## Packages
-- Python 3.6
-- torch 1.5.0+cu101
-- numpy 1.19.1
-- pandas 1.1.0
-- matplotlib 3.2.1
-- captum 0.2.0 (https://captum.ai/)
-- h5py 2.10.0
+## Requirements
+- Python >= 3.10
+- PyTorch >= 2.0.0
+- NumPy >= 1.24.0
+- pandas >= 2.0.0
+- h5py >= 3.8.0
+- PyYAML >= 6.0
+- click >= 8.1.0
+- pyplink >= 1.3.0
+- scikit-learn >= 1.3.0
+
+### Optional
+- captum >= 0.6.0 (for interpretability)
+- matplotlib >= 3.7.0 (for visualization)
+- comet-ml >= 3.33.0 (for experiment tracking)

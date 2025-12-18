@@ -11,6 +11,7 @@ class FoldDataset(torch.utils.data.Dataset):
     # These variables are set in train.py
     dataset_file = None #path to h5py file
     label_type = None # Int if classification, float if regression
+    task = None # 'classification' or 'regression'
 
     def __init__(self, set_indexes):
         self.set_indexes = set_indexes
@@ -22,24 +23,28 @@ class FoldDataset(torch.utils.data.Dataset):
         # Data of all sets (train, valid, test) is in one file
         # so we convert the index to match file index
         file_index = self.set_indexes[index]
-        """
-        with h5py.File(FoldDataset.dataset_file, 'r') as f:
-            x = np.array(f['inputs'][file_index], dtype=np.int8)
-            y = (f['labels'][file_index]).astype(np.int)
-            sample = (f['samples'][file_index]).astype(np.str_)
-        """
+
+        # Input features
         x = np.array(self.f['inputs'][file_index], dtype=np.int8)
-        y = (self.f['labels'][file_index]).astype(self.label_type)
+
+        # Label - use appropriate field based on task type
+        if self.task == 'classification':
+            # Try class_labels first (new format), fall back to labels
+            if 'class_labels' in self.f:
+                y = (self.f['class_labels'][file_index]).astype(self.label_type)
+            else:
+                y = (self.f['labels'][file_index]).astype(self.label_type)
+        elif self.task == 'regression':
+            if 'regression_labels' in self.f:
+                y = (self.f['regression_labels'][file_index]).astype(self.label_type)
+            else:
+                y = (self.f['labels'][file_index]).astype(self.label_type)
+        else:
+            # Default behavior for backward compatibility
+            y = (self.f['labels'][file_index]).astype(self.label_type)
+
         sample = (self.f['samples'][file_index]).astype(np.str_)
         return x, y, sample
-        """
-        if self.dataset is None:
-            self.dataset = h5py.File(self.dataset_file, 'r')
-
-        return np.array(self.dataset['inputs'][file_index], dtype=np.int8), \
-               np.array(self.dataset['labels'][file_index]), \
-               np.array(self.dataset['samples'][file_index], dtype=np.int)
-        """
 
     def get_samples(self):
         indexes = np.sort(self.set_indexes)

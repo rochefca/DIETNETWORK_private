@@ -11,11 +11,15 @@ import numpy as np
 
 import h5py
 
-import helpers.dataset_utils as du
+from Dietnet.helpers import dataset_utils as du
 
 
 def create_dataset():
     args = parse_args()
+    create_dataset_with_args(args)
+
+
+def create_dataset_with_args(args):
     start_time = time.time()
 
     #----------------------------
