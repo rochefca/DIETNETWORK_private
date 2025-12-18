@@ -16,7 +16,10 @@ import helpers.mainloop_utils as mlu
 
 def test():
     args = parse_args()
+    test_with_args(args)
 
+
+def test_with_args(args):
     # Set GPU
     print('Cuda available:', torch.cuda.is_available())
     print('Current cuda device ', torch.cuda.current_device())

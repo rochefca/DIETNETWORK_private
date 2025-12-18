@@ -10,7 +10,10 @@ import helpers.dataset_utils as du
 
 def partition_data():
     args = parse_args()
+    partition_data_with_args(args)
 
+
+def partition_data_with_args(args):
     # Load samples
     dataset_file = os.path.join(args.exp_path, args.dataset)
     f = h5py.File(dataset_file, 'r')

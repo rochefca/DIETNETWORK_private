@@ -13,8 +13,12 @@ NB_POSSIBLE_GENOTYPES = 3
 
 
 def generate_embedding():
-    start_time = time.time()
     args = parse_args()
+    generate_embedding_with_args(args)
+
+
+def generate_embedding_with_args(args):
+    start_time = time.time()
 
     # Data
     data = h5py.File(os.path.join(args.exp_path,args.dataset))

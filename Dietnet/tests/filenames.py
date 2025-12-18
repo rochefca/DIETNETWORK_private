@@ -1,0 +1,11 @@
+EXP_PATH = '/lustre06/project/6065672/sciclun4/Experiments/Dietnet_exp'
+
+DATASET_UKBB='dataset_407325inds_408940snps_4classes.hdf5'
+PARTITION_UKBB='partition_407325inds_first2000only.npz'
+EMBEDDING_UKBB='embedding_407325inds_408940snps_4classes.npz'
+INP_FEAT_MEANS_UKBB='input_features_means_407325inds_408940snps.npz'
+
+DATASET_1000G='dataset_1000G_3450inds_294427snps.hdf5'
+PARTITION_1000G='partition_1000G_3450inds.npz'
+EMBEDDING_1000G='embedding_1000G_3450inds_294427snps.npz'
+INP_FEAT_MEANS_1000G='preprocessing_params_1000G_3450inds_294427snps.npz'

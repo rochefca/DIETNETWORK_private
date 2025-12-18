@@ -24,7 +24,10 @@ import helpers.log_utils as lu
 
 def main():
     args = parse_args()
+    main_with_args(args)
 
+
+def main_with_args(args):
     # Create dir where training info will be saved
     """
     The directory will be created in exp_path/exp_name with the name
