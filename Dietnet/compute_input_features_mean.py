@@ -2,6 +2,7 @@ import argparse
 import os
 import multiprocessing as mp
 import time
+from pathlib import PurePath
 
 import numpy as np
 
@@ -16,69 +17,101 @@ def get_preprocessing_params():
     start_time = time.time()
     args = parse_args()
 
-    # Load data
-    data = h5py.File(os.path.join(args.exp_path,args.dataset))
+    # Load partition indexes
     folds_indexes = du.load_folds_indexes(
             os.path.join(args.exp_path,args.partition)
             )
 
-    means_by_fold = []
-    for fold in range(len(folds_indexes)):
-        print('Computing preprocessing parameters of fold', str(fold))
-        # Get fold inputs (x)
-        print('Loading fold {} indexes'.format(fold))
-        fold_indexes = folds_indexes[fold]
+    # Detect dataset type
+    if args.dataset.endswith('.hdf5') or args.dataset.endswith('.h5'):
+        # HDF5 mode
+        print('Using HDF5 dataset')
+        data = h5py.File(os.path.join(args.exp_path,args.dataset))
 
-        # Genotypes of training samples
-        print('Getting genotypes of train samples')
-        train_indexes = np.sort(fold_indexes[0]) # sort is a hdf5 requirement
-        x_train = data['inputs'][train_indexes]
+        means_by_fold = []
+        for fold in range(len(folds_indexes)):
+            print('Computing preprocessing parameters of fold', str(fold))
+            # Get fold inputs (x)
+            print('Loading fold {} indexes'.format(fold))
+            fold_indexes = folds_indexes[fold]
 
-        # Convert to torch tensor
-        x_train = torch.from_numpy(x_train.astype(np.float32))
+            # Genotypes of training samples
+            print('Getting genotypes of train samples')
+            train_indexes = np.sort(fold_indexes[0]) # sort is a hdf5 requirement
+            x_train = data['inputs'][train_indexes]
 
-        if args.parallel_loading:
-            # Compute mean of every features in parallel
-            ncpus = args.ncpus
-            print('Computing input features means in parallel using '
-                  '{} processes'.format(ncpus))
-            pool = mp.Pool(processes=ncpus) #this starts ncpus nb of processes
+            # Convert to torch tensor
+            x_train = torch.from_numpy(x_train.astype(np.float32))
 
-            # Results that will be returned by processes
-            results = []
+            if args.parallel_loading:
+                # Compute mean of every features in parallel
+                ncpus = args.ncpus
+                print('Computing input features means in parallel using '
+                      '{} processes'.format(ncpus))
+                pool = mp.Pool(processes=ncpus) #this starts ncpus nb of processes
 
-            # The mean of every snp feature is computed by a different process
-            nb_snps = x_train.shape[1]
-            for i in range(nb_snps):
-                results.append(
-                        pool.apply_async(
-                            compute_feature_mean, args=(i, x_train[:,i])))
+                # Results that will be returned by processes
+                results = []
 
-            # Get order (snp nb) and mean of features from multiprocess results
-            print('Computed mean of every feature, getting the results')
-            results_values = np.array([np.array(p.get()) for p in results])
+                # The mean of every snp feature is computed by a different process
+                nb_snps = x_train.shape[1]
+                for i in range(nb_snps):
+                    results.append(
+                            pool.apply_async(
+                                compute_feature_mean, args=(i, x_train[:,i])))
 
-            print(results_values)
-            print(results_values.shape)
+                # Get order (snp nb) and mean of features from multiprocess results
+                print('Computed mean of every feature, getting the results')
+                results_values = np.array([np.array(p.get()) for p in results])
 
-            # Order means based on snp nb
-            print('Ordering means returned by multiprocessing')
-            idx = results_values[:,0].astype(int)
-            ordered_idx = idx.argsort()
+                print(results_values)
+                print(results_values.shape)
 
-            # Ordered means
-            means = results_values[:,1][ordered_idx]
+                # Order means based on snp nb
+                print('Ordering means returned by multiprocessing')
+                idx = results_values[:,0].astype(int)
+                ordered_idx = idx.argsort()
 
-            print(means)
+                # Ordered means
+                means = results_values[:,1][ordered_idx]
+
+                print(means)
 
 
-        else:
+            else:
+                # Compute features means and sd
+                means = du.compute_norm_values(x_train)
+
+            means_by_fold.append(means)
+
+        data.close()
+
+    else:
+        # PLINK mode - load genotypes and compute stats
+        print('Using PLINK dataset')
+        from Dietnet.helpers.dataset_utils import load_plink_genotypes
+        from tqdm import tqdm
+
+        plink_prefix = os.path.join(args.exp_path, args.dataset).replace('.bed', '')
+        cache_file = PurePath(args.exp_path, args.dataset.replace('.bed', '_genotypes.npy'))
+
+        # Load all genotypes
+        genotypes, fam_data, bim_data = load_plink_genotypes(plink_prefix, cache_file)
+
+        # Compute per-fold means and stds
+        means_by_fold = []
+        nb_folds = len(folds_indexes)
+        for fold in tqdm(range(nb_folds), desc='Computing fold statistics', unit='fold'):
+            train_indices = folds_indexes[fold][0]
+            train_genotypes = genotypes[train_indices]  # Subset to train samples
+
+            # Convert to torch tensor
+            x_train = torch.from_numpy(train_genotypes.astype(np.float32))
+
             # Compute features means and sd
             means = du.compute_norm_values(x_train)
 
-        means_by_fold.append(means)
-
-    data.close()
+            means_by_fold.append(means)
 
     # Save
     print('Saving input features mean to', os.path.join(args.exp_path,args.out))

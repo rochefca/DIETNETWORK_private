@@ -66,6 +66,12 @@ def main():
     help='Input feature means for missing value imputation (default: input_features_means.npz).'
 )
 @click.option(
+    '--label-file',
+    type=str,
+    default=None,
+    help='Label file (TSV format, required for PLINK datasets).'
+)
+@click.option(
     '--which-fold',
     type=int,
     required=True,
@@ -105,7 +111,7 @@ def main():
     help='Run in hyperparameter optimization mode (default: disabled).'
 )
 def train(exp_path, exp_name, config, dataset, partition, embedding,
-          input_features_means, which_fold, task, normalize, param_init,
+          input_features_means, label_file, which_fold, task, normalize, param_init,
           comet_ml, comet_ml_project_name, optimization):
     """
     Train a DietNetwork model on a specific fold.
@@ -127,6 +133,7 @@ def train(exp_path, exp_name, config, dataset, partition, embedding,
     args.partition = partition
     args.embedding = embedding
     args.input_features_means = input_features_means
+    args.label_file = label_file
     args.which_fold = which_fold
     args.task = task
     args.normalize = normalize
@@ -431,7 +438,13 @@ def partition(exp_path, dataset, output_name, nb_folds, train_valid_ratio, seed)
     default='classification',
     help='Task type (default: classification).'
 )
-def generate_embedding(exp_path, dataset, partition, output_name, task):
+@click.option(
+    '--label-file',
+    type=str,
+    default=None,
+    help='Label file (TSV format, required for PLINK datasets).'
+)
+def generate_embedding(exp_path, dataset, partition, output_name, task, label_file):
     """
     Generate genotype frequency embeddings for each fold.
 
@@ -449,6 +462,10 @@ def generate_embedding(exp_path, dataset, partition, output_name, task):
     args.partition = partition
     args.out = output_name
     args.task = task
+    args.label_file = label_file
+    args.include_valid = False
+    args.only_valid = False
+    args.emb_class_label = 'labels'
 
     from Dietnet import generate_embedding as embedding_module
     embedding_module.generate_embedding_with_args(args)

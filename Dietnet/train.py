@@ -4,6 +4,7 @@ import sys
 import time
 import yaml
 import pprint
+from pathlib import PurePath
 
 import h5py
 
@@ -71,6 +72,7 @@ def main_with_args(args):
     specifics['normalize'] = args.normalize
     #specifics['preprocess_params'] = args.preprocess_params
     specifics['input_features_means'] = args.input_features_means
+    specifics['label_file'] = args.label_file
     specifics['task'] = args.task
     specifics['param_init'] = args.param_init
 
@@ -213,28 +215,83 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     # ----------------------------------------
     print('\n --- Making train, valid, test sets classes ---')
 
-    # Dataset hdf5 file
+    # Dataset file
     dataset_file = os.path.join(
             config['specifics']['exp_path'],
             config['specifics']['dataset'])
 
-    du.FoldDataset.dataset_file = dataset_file
-    du.FoldDataset.f = h5py.File(du.FoldDataset.dataset_file, 'r')
-
-    # Set task type
-    du.FoldDataset.task = config['specifics']['task']
-
     # Label conversion depending on task
     if config['specifics']['task'] == 'classification':
-        du.FoldDataset.label_type = np.int64
+        label_type = np.int64
     elif config['specifics']['task'] == 'regression':
-        du.FoldDataset.label_type = np.float32
+        label_type = np.float32
 
-    train_set = du.FoldDataset(fold_idx[0])
+    # Detect dataset type
+    if config['specifics']['dataset'].endswith('.hdf5') or config['specifics']['dataset'].endswith('.h5'):
+        # HDF5 mode (backward compatibility)
+        print('Using HDF5 dataset')
+        du.FoldDataset.dataset_file = dataset_file
+        du.FoldDataset.f = h5py.File(du.FoldDataset.dataset_file, 'r')
+        du.FoldDataset.task = config['specifics']['task']
+        du.FoldDataset.label_type = label_type
+        dataset_class = du.FoldDataset
+
+        # Get SNP names for later use
+        with h5py.File(dataset_file, 'r') as f:
+            snp_names = f['snp_names'][:]
+
+    else:
+        # PLINK mode
+        print('Using PLINK dataset')
+        from Dietnet.helpers.dataset_utils import load_plink_genotypes, PLINKFoldDataset
+
+        plink_prefix = dataset_file.replace('.bed', '')
+
+        # Optional: use .npy cache for faster loading
+        cache_file = PurePath(config['specifics']['exp_path'],
+                              config['specifics']['dataset'].replace('.bed', '_genotypes.npy'))
+
+        # Load all genotypes into memory
+        genotypes, fam_data, bim_data = load_plink_genotypes(plink_prefix, cache_file)
+
+        # Load and order labels
+        label_file = config['specifics'].get('label_file')
+        if label_file is None:
+            raise ValueError("--label-file is required for PLINK datasets")
+
+        label_samples, labels = du.load_labels(PurePath(config['specifics']['exp_path'], label_file))
+        fam_samples = fam_data['iid'].values
+        ordered_labels = du.order_labels(fam_samples, label_samples, labels)
+
+        # Convert labels to appropriate type
+        if config['specifics']['task'] == 'classification':
+            label_names = np.unique(ordered_labels)
+            label_to_idx = {label: idx for idx, label in enumerate(label_names)}
+            ordered_labels = np.array([label_to_idx[label] for label in ordered_labels])
+            # Store label names for later use
+            config['_plink_label_names'] = label_names
+        else:
+            ordered_labels = ordered_labels.astype(np.float32)
+
+        # Set class variables (shared across all datasets)
+        PLINKFoldDataset.plink_prefix = plink_prefix
+        PLINKFoldDataset.label_file = label_file
+        PLINKFoldDataset.task = config['specifics']['task']
+        PLINKFoldDataset.label_type = label_type
+        PLINKFoldDataset.genotype_cache = genotypes
+        PLINKFoldDataset.fam_data = fam_data
+        PLINKFoldDataset.bim_data = bim_data
+        PLINKFoldDataset.ordered_labels = ordered_labels
+
+        dataset_class = PLINKFoldDataset
+        snp_names = bim_data.index.values  # SNP IDs from BIM file
+
+    # Create datasets (works for both HDF5 and PLINK)
+    train_set = dataset_class(fold_idx[0])
     print('training set:', len(train_set))
-    valid_set = du.FoldDataset(fold_idx[1])
+    valid_set = dataset_class(fold_idx[1])
     print('valid set:', len(valid_set))
-    test_set = du.FoldDataset(fold_idx[2])
+    test_set = dataset_class(fold_idx[2])
     print('test set:', len(test_set))
 
     # ----------------------------------------
@@ -271,12 +328,16 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
     # Main net output size (nb targets)
     if config['specifics']['task'] == 'classification':
-        with h5py.File(dataset_file, 'r') as f:
-            # Try class_label_names first (new format), fall back to label_names
-            if 'class_label_names' in f:
-                n_targets = len(f['class_label_names'])
-            else:
-                n_targets = len(f['label_names'])
+        # For PLINK, use stored label names; for HDF5, read from file
+        if '_plink_label_names' in config:
+            n_targets = len(config['_plink_label_names'])
+        else:
+            with h5py.File(dataset_file, 'r') as f:
+                # Try class_label_names first (new format), fall back to label_names
+                if 'class_label_names' in f:
+                    n_targets = len(f['class_label_names'])
+                else:
+                    n_targets = len(f['label_names'])
     elif config['specifics']['task'] == 'regression':
         n_targets = 1
 
@@ -420,8 +481,10 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     #           TRAINING LOOP
     # ----------------------------------------
     total_time = 0
-    for epoch in range(n_epochs):
-        print('Epoch {} of {}'.format(epoch+1, n_epochs), flush=True)
+    from tqdm import tqdm
+
+    pbar = tqdm(range(n_epochs), desc='Training', unit='epoch')
+    for epoch in pbar:
         start_time = time.time()
 
         # ---Training---
@@ -433,18 +496,13 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
         train_results_by_epoch.append(epoch_train_result)
 
-        # Print result (and optional save to comet-ml)
+        # Log to comet-ml if enabled
         if config['specifics']['task'] == 'classification':
-            print('train loss:', epoch_train_result[0],
-                  'train acc:', epoch_train_result[1], flush=True)
-
             if comet_log:
                 experiment.log_metric("train_loss", epoch_train_result[0], epoch=epoch, step=epoch)
                 experiment.log_metric("train_accuracy", epoch_train_result[1], epoch=epoch, step=epoch)
 
         elif config['specifics']['task'] == 'regression':
-            print('train loss:', epoch_train_result[0], flush=True)
-
             if comet_log:
                 experiment.log_metric("train_loss", epoch_train_result[0], epoch=epoch, step=epoch)
 
@@ -457,20 +515,29 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
         valid_results_by_epoch.append(epoch_valid_result)
 
-        # Print result (and optional save to comet-ml)
+        # Log to comet-ml if enabled
         if config['specifics']['task'] == 'classification':
-            print('valid loss:', epoch_valid_result[0],
-                  'valid acc:', epoch_valid_result[1], flush=True)
-
             if comet_log:
                 experiment.log_metric("valid_loss", epoch_valid_result[0], epoch=epoch, step=epoch)
                 experiment.log_metric("valid_accuracy", epoch_valid_result[1], epoch=epoch, step=epoch)
 
         elif config['specifics']['task'] == 'regression':
-            print('valid loss:', epoch_valid_result[0], flush=True)
-
             if comet_log:
                 experiment.log_metric("valid_loss", epoch_valid_result[0], epoch=epoch, step=epoch)
+
+        # Update progress bar with metrics
+        if config['specifics']['task'] == 'classification':
+            pbar.set_postfix({
+                'train_loss': f'{epoch_train_result[0]:.3f}',
+                'train_acc': f'{epoch_train_result[1]:.3f}',
+                'valid_loss': f'{epoch_valid_result[0]:.3f}',
+                'valid_acc': f'{epoch_valid_result[1]:.3f}'
+            })
+        elif config['specifics']['task'] == 'regression':
+            pbar.set_postfix({
+                'train_loss': f'{epoch_train_result[0]:.3f}',
+                'valid_loss': f'{epoch_valid_result[0]:.3f}'
+            })
 
         # ---Baseline: check  improvement---
         """
@@ -493,7 +560,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
             best_result = mlu.update_best_result(best_result, epoch_valid_result)
 
             # Save model parameters (for later inference)
-            print('best validation achieved at epoch {} saving model'.format(epoch+1))
+            pbar.write(f'✓ Best validation at epoch {epoch+1} - saving model')
 
         else:
             patience += 1
@@ -519,16 +586,17 @@ def train(config, comet_log, comet_project_name, optimization_exp):
                     param_group['lr'] * config['params']['learning_rate_annealing']
 
         # ---Time---
-        #end_time = time.time()
         epoch_time = time.time() - start_time
         total_time += epoch_time
-        print('time:', epoch_time, flush=True)
 
         if comet_log:
             experiment.log_metric("epoch_time", epoch_time, epoch=epoch, step=epoch)
 
+    # Close progress bar
+    pbar.close()
+
     # End of training phase
-    print('Early stoping:', has_early_stoped, flush=True)
+    print(f'\nEarly stopping: {has_early_stoped}')
 
     # ----------------------------------------
     #                 TEST
@@ -682,6 +750,13 @@ def parse_args():
             default='input_features_means.npz',
             help=('Filename of computed input features means. The means are '
                   'used to replace missing genotypes. Default: %(default)s')
+            )
+
+    parser.add_argument(
+            '--label-file',
+            type=str,
+            default=None,
+            help='Path to label file (TSV format, required for PLINK datasets)'
             )
 
     # Input features normalization

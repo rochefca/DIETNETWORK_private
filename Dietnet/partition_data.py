@@ -16,9 +16,21 @@ def partition_data():
 def partition_data_with_args(args):
     # Load samples
     dataset_file = os.path.join(args.exp_path, args.dataset)
-    f = h5py.File(dataset_file, 'r')
-    indices = np.arange(len(f['samples']))
-    f.close()
+
+    # Detect dataset type
+    if args.dataset.endswith('.hdf5') or args.dataset.endswith('.h5'):
+        # HDF5 mode
+        f = h5py.File(dataset_file, 'r')
+        nb_samples = len(f['samples'])
+        f.close()
+    else:
+        # PLINK mode - just read FAM file (fast, no genotype loading)
+        from pyplink import PyPlink
+        plink_prefix = dataset_file.replace('.bed', '')
+        plink_reader = PyPlink(plink_prefix)
+        nb_samples = plink_reader.get_nb_samples()
+
+    indices = np.arange(nb_samples)
 
     print('Partitioning indices of', len(indices), 'samples')
 

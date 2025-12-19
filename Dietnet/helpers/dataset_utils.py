@@ -1,4 +1,5 @@
 import math
+import os
 
 import numpy as np
 
@@ -65,6 +66,103 @@ class ExternalTestDataset(torch.utils.data.Dataset):
         sample = (self.dataset['samples'][index]).astype(np.str_)
 
         return x, sample
+
+
+class PLINKFoldDataset(torch.utils.data.Dataset):
+    """Dataset class for PLINK files. Matches FoldDataset interface."""
+    # Class variables (set externally like FoldDataset)
+    plink_prefix = None      # Path to .bed/.bim/.fam without extension
+    label_file = None        # Path to label TSV file
+    label_type = None        # int for classification, float for regression
+    task = None              # 'classification' or 'regression'
+    genotype_cache = None    # Shared across all datasets (train/valid/test)
+    fam_data = None          # Shared FAM data
+    bim_data = None          # Shared BIM data
+    ordered_labels = None    # Shared labels
+
+    def __init__(self, set_indexes):
+        """
+        Args:
+            set_indexes: Array of sample indices for this fold/set
+        """
+        self.set_indexes = set_indexes
+
+    def __len__(self):
+        return len(self.set_indexes)
+
+    def __getitem__(self, index):
+        """Returns same format as FoldDataset: (genotypes, label, sample_id)"""
+        # Convert dataset index to file index
+        file_index = self.set_indexes[index]
+
+        # Get genotype row from shared cache
+        x = self.genotype_cache[file_index]
+
+        # Get label
+        y = self.ordered_labels[file_index]
+
+        # Get sample ID
+        sample = self.fam_data['iid'].values[file_index]
+
+        return x, y, sample
+
+    def get_samples(self):
+        """Returns sample IDs for this dataset (matches FoldDataset interface)"""
+        indexes = np.sort(self.set_indexes)
+        samples = self.fam_data['iid'].values[indexes]
+        return samples
+
+
+def load_plink_genotypes(plink_prefix, cache_file=None):
+    """
+    Load all genotypes from PLINK files into memory.
+    Follows pattern from 999_recompute_pca.ipynb
+
+    Args:
+        plink_prefix: Path to PLINK files without extension
+        cache_file: Optional .npy file to cache genotypes
+
+    Returns:
+        genotypes: ndarray of shape (n_samples, n_markers) dtype=int8
+        fam_data: DataFrame with sample info
+        bim_data: DataFrame with marker info
+    """
+    from pyplink import PyPlink
+    from tqdm import tqdm
+
+    # Check if cache exists
+    if cache_file and os.path.exists(cache_file):
+        print(f'Loading cached genotypes from {cache_file}')
+        genotypes = np.load(cache_file)
+        pedfile = PyPlink(plink_prefix)
+        fam_data = pedfile.get_fam()
+        bim_data = pedfile.get_bim()
+        print(f'Loaded cached genotypes: {genotypes.shape}')
+        return genotypes, fam_data, bim_data
+
+    # Load from PLINK files
+    pedfile = PyPlink(plink_prefix)
+    fam_data = pedfile.get_fam()
+    bim_data = pedfile.get_bim()
+
+    n_samples = pedfile.get_nb_samples()
+    n_markers = pedfile.get_nb_markers()
+
+    print(f'Loading {n_markers:,} markers for {n_samples:,} samples...')
+    genotypes = np.zeros([n_samples, n_markers], dtype=np.int8)
+
+    # Iterate through markers and fill array with progress bar
+    for i, (marker_id, marker_genotypes) in enumerate(tqdm(pedfile, total=n_markers, desc='Loading markers', unit='markers')):
+        genotypes[:, i] = marker_genotypes
+
+    print(f'✓ Loaded genotypes: {genotypes.shape}')
+
+    # Cache if requested
+    if cache_file:
+        print(f'Caching genotypes to {cache_file}')
+        np.save(cache_file, genotypes)
+
+    return genotypes, fam_data, bim_data
 
 
 def shuffle(indices, seed=None):
@@ -314,16 +412,12 @@ def compute_norm_values(x):
     with torch.no_grad():
         per_feature_mean = torch.sum(x*mask, dim=0) / torch.sum(mask, dim=0)
 
-        print('Computed per feature mean')
-
         # S.d. of every column (feature)
         per_feature_sd = torch.sqrt(
                 torch.sum((x*mask-mask*per_feature_mean)**2, dim=0) / \
                         (torch.sum(mask, dim=0) - 1)
                         )
         per_feature_sd += 1e-6
-
-        print('Computed per feature sd')
 
     return per_feature_mean, per_feature_sd
 
