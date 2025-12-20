@@ -113,43 +113,65 @@ class PLINKFoldDataset(torch.utils.data.Dataset):
         return samples
 
 
-def load_plink_genotypes(plink_prefix, cache_file=None):
+def load_plink_genotypes(plink_prefix, cache_file=None, use_memmap=True):
     """
-    Load all genotypes from PLINK files into memory.
-    Follows pattern from 999_recompute_pca.ipynb
+    Load genotypes from PLINK files with optional memory mapping for scalability.
+
+    For large datasets (e.g., 400K samples), uses memory mapping to avoid loading
+    entire dataset into RAM. OS handles paging from disk automatically.
 
     Args:
         plink_prefix: Path to PLINK files without extension
         cache_file: Optional .npy file to cache genotypes
+        use_memmap: If True, use memory-mapped array for large datasets (default: True)
 
     Returns:
-        genotypes: ndarray of shape (n_samples, n_markers) dtype=int8
+        genotypes: ndarray or memmap of shape (n_samples, n_markers) dtype=int8
         fam_data: DataFrame with sample info
         bim_data: DataFrame with marker info
     """
     from pyplink import PyPlink
     from tqdm import tqdm
 
+    # Get metadata first
+    pedfile = PyPlink(plink_prefix)
+    fam_data = pedfile.get_fam()
+    bim_data = pedfile.get_bim()
+    n_samples = pedfile.get_nb_samples()
+    n_markers = pedfile.get_nb_markers()
+
+    # Calculate dataset size
+    dataset_size_gb = (n_samples * n_markers * 1) / (1024**3)  # int8 = 1 byte
+
     # Check if cache exists
     if cache_file and os.path.exists(cache_file):
-        print(f'Loading cached genotypes from {cache_file}')
-        genotypes = np.load(cache_file)
-        pedfile = PyPlink(plink_prefix)
-        fam_data = pedfile.get_fam()
-        bim_data = pedfile.get_bim()
+        # Decide whether to use memory mapping based on dataset size
+        if use_memmap and dataset_size_gb > 2.0:  # Use memmap for datasets > 2GB
+            print(f'Loading cached genotypes from {cache_file} (memory-mapped)')
+            print(f'Dataset size: {dataset_size_gb:.2f}GB - using disk-based access for scalability')
+            genotypes = np.load(cache_file, mmap_mode='r')  # Read-only memory map
+        else:
+            print(f'Loading cached genotypes from {cache_file}')
+            genotypes = np.load(cache_file)
         print(f'Loaded cached genotypes: {genotypes.shape}')
         return genotypes, fam_data, bim_data
 
     # Load from PLINK files
-    pedfile = PyPlink(plink_prefix)
-    fam_data = pedfile.get_fam()
-    bim_data = pedfile.get_bim()
-
-    n_samples = pedfile.get_nb_samples()
-    n_markers = pedfile.get_nb_markers()
-
     print(f'Loading {n_markers:,} markers for {n_samples:,} samples...')
-    genotypes = np.zeros([n_samples, n_markers], dtype=np.int8)
+    print(f'Dataset size: {dataset_size_gb:.2f}GB')
+
+    if cache_file and use_memmap and dataset_size_gb > 2.0:
+        # Create memory-mapped file for large datasets
+        print('Creating memory-mapped cache file for scalability')
+        genotypes = np.lib.format.open_memmap(
+            cache_file,
+            mode='w+',
+            dtype=np.int8,
+            shape=(n_samples, n_markers)
+        )
+    else:
+        # Load into RAM for small datasets
+        genotypes = np.zeros([n_samples, n_markers], dtype=np.int8)
 
     # Iterate through markers and fill array with progress bar
     for i, (marker_id, marker_genotypes) in enumerate(tqdm(pedfile, total=n_markers, desc='Loading markers', unit='markers')):
@@ -157,10 +179,12 @@ def load_plink_genotypes(plink_prefix, cache_file=None):
 
     print(f'✓ Loaded genotypes: {genotypes.shape}')
 
-    # Cache if requested
-    if cache_file:
-        print(f'Caching genotypes to {cache_file}')
-        np.save(cache_file, genotypes)
+    # Flush to disk if memory-mapped
+    if isinstance(genotypes, np.memmap):
+        genotypes.flush()
+        print(f'✓ Flushed to disk: {cache_file}')
+        # Reopen as read-only for safety
+        genotypes = np.load(cache_file, mmap_mode='r')
 
     return genotypes, fam_data, bim_data
 
@@ -439,3 +463,129 @@ def normalize(x, per_feature_mean, per_feature_sd):
     x_norm = (x - per_feature_mean) / per_feature_sd
 
     return x_norm
+
+
+class InferenceDataset(torch.utils.data.Dataset):
+    """
+    Dataset for inference on PLINK files with automatic SNP alignment.
+
+    This dataset handles:
+    - Loading test PLINK genotypes
+    - Aligning SNPs to model's training SNPs
+    - Missing value imputation (using model's training means)
+    - Normalization (using model's training stats)
+    """
+
+    def __init__(self, plink_prefix, model_package, use_memmap=True, cache_dir=None):
+        """
+        Args:
+            plink_prefix: Path to PLINK files (without .bed/.bim/.fam extension)
+            model_package: ModelPackage instance with model metadata
+            use_memmap: Whether to use memory mapping for large datasets
+            cache_dir: Optional directory for caching aligned genotypes
+        """
+        from pathlib import Path
+        from Dietnet.helpers.snp_alignment import create_snp_mapping, check_alignment_quality
+
+        self.plink_prefix = plink_prefix
+        self.model_package = model_package
+
+        print(f"\n=== Preparing inference dataset ===")
+        print(f"Test PLINK: {plink_prefix}")
+        print(f"Model: seed {model_package.seed}, fold {model_package.fold}")
+
+        # Load test genotypes
+        print("\nLoading test genotypes...")
+        cache_file = None
+        if cache_dir:
+            cache_file = Path(cache_dir) / f"{Path(plink_prefix).name}_genotypes.npy"
+
+        self.genotypes, self.fam_data, self.bim_data = load_plink_genotypes(
+            plink_prefix,
+            cache_file=cache_file,
+            use_memmap=use_memmap
+        )
+
+        self.n_samples = len(self.fam_data)
+        print(f"Loaded {self.n_samples} samples, {len(self.bim_data)} SNPs")
+
+        # Create SNP alignment mapping
+        print("\nAligning SNPs to model...")
+        test_bim_path = f"{plink_prefix}.bim"
+        self.snp_mapping, self.alignment_info = create_snp_mapping(
+            test_bim=test_bim_path,
+            model_snps=model_package.snps,
+            fill_value=-1
+        )
+
+        # Check alignment quality (warns if poor overlap)
+        check_alignment_quality(self.alignment_info, min_overlap=0.1, raise_on_poor=False)
+
+        # Load model's input statistics for imputation and normalization
+        input_stats = model_package.input_stats
+        self.training_means = torch.from_numpy(input_stats['mean']).float()
+
+        if 'std' in input_stats:
+            self.training_stds = torch.from_numpy(input_stats['std']).float()
+        else:
+            # If no std available, compute from means (won't normalize, just impute)
+            self.training_stds = torch.ones_like(self.training_means)
+
+        print(f"✓ Inference dataset ready: {self.n_samples} samples")
+
+    def __len__(self):
+        return self.n_samples
+
+    def __getitem__(self, index):
+        """
+        Returns preprocessed genotypes for a single sample.
+
+        Returns:
+            Tuple of (aligned_genotypes, sample_id)
+            - aligned_genotypes: torch.Tensor of shape (n_model_snps,)
+            - sample_id: str
+        """
+        # Get genotypes for this sample (all test SNPs)
+        sample_geno = self.genotypes[index]  # Shape: (n_test_snps,)
+
+        # Align to model SNPs
+        aligned_geno = self._align_sample(sample_geno)
+
+        # Convert to tensor
+        aligned_geno = torch.from_numpy(aligned_geno).float()
+
+        # Impute missing values with training means
+        mask = (aligned_geno >= 0)
+        aligned_geno = mask * aligned_geno + (~mask) * self.training_means
+
+        # Normalize using training statistics
+        aligned_geno = (aligned_geno - self.training_means) / self.training_stds
+
+        # Get sample ID from FAM file
+        sample_id = self.fam_data.iloc[index]['iid']
+
+        return aligned_geno, sample_id
+
+    def _align_sample(self, sample_genotypes):
+        """
+        Align a single sample's genotypes to model SNP order.
+
+        Args:
+            sample_genotypes: Array of shape (n_test_snps,)
+
+        Returns:
+            Aligned genotypes of shape (n_model_snps,)
+        """
+        n_model_snps = len(self.snp_mapping)
+        aligned = np.full(n_model_snps, -1, dtype=np.float32)
+
+        # Fill in matched SNPs
+        valid_mask = self.snp_mapping >= 0
+        valid_indices = self.snp_mapping[valid_mask]
+        aligned[valid_mask] = sample_genotypes[valid_indices]
+
+        return aligned
+
+    def get_sample_ids(self):
+        """Get all sample IDs in order."""
+        return self.fam_data['iid'].tolist()
