@@ -47,7 +47,49 @@ uv pip install -e ".[tracking]"
 uv pip install -e ".[dev]"
 ```
 
-## Quick Start
+## Quick Start - Smoke Test
+
+Validate your installation with the 1000 Genomes smoke test:
+
+```bash
+# Run smoke test (downloads model and data automatically)
+bash tests/run_smoke_test.sh
+```
+
+Expected output:
+```
+Accuracy: 94.75%
+Expected: 85-100%
+✓ PASSED
+```
+
+This test:
+- Downloads a pretrained 1KGP model (~57 MB)
+- Downloads 1KGP test data (~1-2 GB)
+- Runs inference and validates accuracy
+- Caches everything for future runs
+
+## Using Model Presets
+
+Run inference with pretrained models:
+
+```bash
+# Using a preset model (downloads automatically)
+dietnet predict --model 1kgp_default \
+                --plink-prefix /path/to/your/data \
+                --output predictions.tsv
+
+# Using a local model package
+dietnet predict --model ./pretrained_1000g \
+                --plink-prefix /path/to/your/data \
+                --output predictions.tsv
+```
+
+**Available presets:**
+- `1kgp_default`: 1000 Genomes Phase 3 (24 populations, single model)
+- `hgdp_ukbb`: HGDP+1KGP for UKBB inference (coming soon)
+
+## Training from Scratch
 
 ### Complete workflow
 

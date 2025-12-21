@@ -147,59 +147,122 @@ def train(exp_path, exp_name, config, dataset, partition, embedding,
 
 
 @main.command()
+# NEW MODEL PACKAGE APPROACH (Recommended)
+@click.option(
+    '--model',
+    type=str,
+    default=None,
+    help='Model preset (e.g., 1kgp_default) or path to model package directory.'
+)
+@click.option(
+    '--plink-prefix',
+    type=str,
+    default=None,
+    help='PLINK file prefix for test data (without .bed/.bim/.fam).'
+)
+@click.option(
+    '--output',
+    type=str,
+    default=None,
+    help='Output TSV file for predictions.'
+)
+# LEGACY HDF5 APPROACH (Deprecated)
 @click.option(
     '--test-dataset',
     type=click.Path(exists=True),
-    required=True,
-    help='HDF5 file containing test data.'
+    default=None,
+    help='[DEPRECATED] HDF5 file containing test data.'
 )
 @click.option(
     '--train-dataset',
     type=click.Path(exists=True),
-    required=True,
-    help='HDF5 file containing training data (for SNP alignment).'
+    default=None,
+    help='[DEPRECATED] HDF5 file containing training data (for SNP alignment).'
 )
 @click.option(
     '--config',
     type=click.Path(exists=True),
-    required=True,
-    help='YAML config file used for training.'
+    default=None,
+    help='[DEPRECATED] YAML config file used for training.'
 )
 @click.option(
     '--embedding',
     type=click.Path(exists=True),
-    required=True,
-    help='Genotype frequency embedding file from training.'
+    default=None,
+    help='[DEPRECATED] Genotype frequency embedding file from training.'
 )
 @click.option(
     '--input-features-stats',
     type=click.Path(exists=True),
-    required=True,
-    help='Input feature statistics from training (for normalization).'
+    default=None,
+    help='[DEPRECATED] Input feature statistics from training (for normalization).'
 )
 @click.option(
     '--model-params',
     type=click.Path(exists=True),
-    required=True,
-    help='Trained model checkpoint (.pt file).'
+    default=None,
+    help='[DEPRECATED] Trained model checkpoint (.pt file).'
 )
 @click.option(
     '--output-dir',
     type=click.Path(),
-    required=True,
-    help='Directory where predictions will be saved.'
+    default=None,
+    help='[DEPRECATED] Directory where predictions will be saved.'
 )
 @click.option(
     '--output-name',
     type=str,
     default='predictions',
-    help='Base name for output files (default: predictions).'
+    help='[DEPRECATED] Base name for output files (default: predictions).'
 )
 @click.option(
     '--which-fold',
     type=int,
-    required=True,
-    help='Which fold was used for training (0-indexed).'
+    default=None,
+    help='[DEPRECATED] Which fold was used for training (0-indexed).'
+)
+# COMMON OPTIONS
+@click.option(
+    '--seeds',
+    type=int,
+    multiple=True,
+    default=None,
+    help='Seeds to use (default: all in model package).'
+)
+@click.option(
+    '--folds',
+    type=int,
+    multiple=True,
+    default=None,
+    help='Folds to use (default: all in model package).'
+)
+@click.option(
+    '--batch-size',
+    type=int,
+    default=128,
+    help='Batch size for inference (default: 128).'
+)
+@click.option(
+    '--device',
+    type=str,
+    default=None,
+    help='Device: cpu or cuda (default: auto-detect).'
+)
+@click.option(
+    '--num-workers',
+    type=int,
+    default=0,
+    help='DataLoader workers (default: 0).'
+)
+@click.option(
+    '--force-download',
+    is_flag=True,
+    help='Force re-download of model preset (only for --model presets).'
+)
+@click.option(
+    '--skip-preprocess',
+    is_flag=True,
+    help='Skip PLINK preprocessing (use if plink-prefix already preprocessed with preprocess-plink).'
 )
 @click.option(
     '--task',
@@ -210,57 +273,184 @@ def train(exp_path, exp_name, config, dataset, partition, embedding,
 @click.option(
     '--normalize/--no-normalize',
     default=True,
-    help='Apply normalization (should match training setting).'
+    help='Apply normalization (default: True).'
 )
-def predict(test_dataset, train_dataset, config, embedding, input_features_stats,
-            model_params, output_dir, output_name, which_fold, task, normalize):
+def predict(model, plink_prefix, output, test_dataset, train_dataset, config,
+            embedding, input_features_stats, model_params, output_dir, output_name,
+            which_fold, seeds, folds, batch_size, device, num_workers, force_download,
+            skip_preprocess, task, normalize):
     """
-    Run inference on an external dataset using a trained model.
+    Run inference on a test dataset using a trained model.
 
-    Aligns test SNPs to training SNPs and generates predictions.
+    NEW APPROACH (Recommended):
+        Use model packages with PLINK data:
 
-    Example:
-        dietnet predict --test-dataset test.hdf5 --train-dataset train.hdf5 \\
-                        --config config.yaml --embedding embedding.npz \\
-                        --input-features-stats input_stats.npz \\
-                        --model-params best_model.pt --output-dir ./results \\
-                        --which-fold 0
+        \b
+        # Using a preset model
+        dietnet predict --model 1kgp_default \\
+                        --plink-prefix /path/to/test_data \\
+                        --output predictions.tsv
+
+        \b
+        # Using a local model package
+        dietnet predict --model ./pretrained_1000g \\
+                        --plink-prefix /path/to/test_data \\
+                        --output predictions.tsv
+
+    LEGACY APPROACH (Deprecated):
+        The HDF5-based approach is deprecated. Please use model packages instead.
     """
-    # Import here to avoid loading heavy modules at CLI startup
+    import warnings
     import sys
     import os
+    import subprocess
     from pathlib import Path
 
-    # Add the parent directory to path to import from other_code
-    # We'll use the test_independent_dataset logic
-    click.echo(f"Loading model from {model_params}...")
-    click.echo(f"Processing test data from {test_dataset}...")
+    # Detect which approach is being used
+    using_model_package = model is not None
+    using_legacy_hdf5 = model_params is not None
 
-    # Create output directory
-    os.makedirs(output_dir, exist_ok=True)
+    if using_model_package and using_legacy_hdf5:
+        click.echo("ERROR: Cannot use both --model and --model-params. Choose one approach.", err=True)
+        sys.exit(1)
 
-    # Build arguments for test script
-    class Args:
-        pass
+    if not using_model_package and not using_legacy_hdf5:
+        click.echo("ERROR: Must provide either --model (new approach) or --model-params (legacy).", err=True)
+        click.echo("See 'dietnet predict --help' for usage examples.", err=True)
+        sys.exit(1)
 
-    args = Args()
-    args.test_dataset = test_dataset
-    args.train_dataset = train_dataset
-    args.config = config
-    args.embedding = embedding
-    args.input_features_stats = input_features_stats
-    args.model_params = model_params
-    args.test_path = output_dir
-    args.test_name = output_name
-    args.which_fold = which_fold
-    args.task = task
-    args.normalize = normalize
+    # ====================
+    # NEW MODEL PACKAGE APPROACH
+    # ====================
+    if using_model_package:
+        # Validate required arguments
+        if not plink_prefix:
+            click.echo("ERROR: --plink-prefix is required when using --model", err=True)
+            sys.exit(1)
+        if not output:
+            click.echo("ERROR: --output is required when using --model", err=True)
+            sys.exit(1)
 
-    # Import and run test logic
-    from Dietnet import test_external_dataset as test_module
-    test_module.test_with_args(args)
+        from Dietnet.model_manager import get_model_path
+        from Dietnet.pretrained_models import PRETRAINED_MODELS
 
-    click.echo(f"✓ Predictions saved to {output_dir}/{output_name}_results.npz")
+        # Resolve model path
+        if model in PRETRAINED_MODELS:
+            # Model preset - download if needed
+            click.echo(f"Using model preset: {model}")
+            model_dir = get_model_path(model, force_download=force_download)
+        else:
+            # Local path
+            model_dir = Path(model)
+            if not model_dir.exists():
+                click.echo(f"ERROR: Model directory not found: {model_dir}", err=True)
+                sys.exit(1)
+            click.echo(f"Using local model: {model_dir}")
+
+        # Determine device
+        if device is None:
+            import torch
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+        # Build command for predict_with_plink.py
+        cmd = [
+            sys.executable,
+            str(Path(__file__).parent / 'predict_with_plink.py'),
+            '--model-dir', str(model_dir),
+            '--plink-prefix', plink_prefix,
+            '--output', output,
+            '--batch-size', str(batch_size),
+            '--device', device,
+            '--num-workers', str(num_workers)
+        ]
+
+        if seeds:
+            cmd.extend(['--seeds'] + [str(s) for s in seeds])
+        if folds:
+            cmd.extend(['--folds'] + [str(f) for f in folds])
+        if skip_preprocess:
+            cmd.append('--skip-preprocess')
+
+        # Run inference
+        result = subprocess.run(cmd)
+        sys.exit(result.returncode)
+
+    # ====================
+    # LEGACY HDF5 APPROACH (DEPRECATED)
+    # ====================
+    else:
+        # Show deprecation warning
+        warnings.warn(
+            "\n"
+            "═══════════════════════════════════════════════════════════════\n"
+            "DEPRECATION WARNING: HDF5-based inference is deprecated!\n"
+            "═══════════════════════════════════════════════════════════════\n"
+            "\n"
+            "The HDF5-based inference approach (--model-params, --test-dataset)\n"
+            "is deprecated and will be removed in a future version.\n"
+            "\n"
+            "Please use the new model package approach instead:\n"
+            "\n"
+            "  dietnet predict --model 1kgp_default \\\n"
+            "                  --plink-prefix /path/to/data \\\n"
+            "                  --output predictions.tsv\n"
+            "\n"
+            "Benefits:\n"
+            "  • Simpler: One --model flag instead of 6 separate files\n"
+            "  • Faster: Works directly with PLINK files (no HDF5 conversion)\n"
+            "  • Scalable: Handles large datasets with memory mapping\n"
+            "  • Portable: Download pretrained models automatically\n"
+            "\n"
+            "═══════════════════════════════════════════════════════════════\n",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
+        # Validate required legacy arguments
+        required_legacy = {
+            'test-dataset': test_dataset,
+            'train-dataset': train_dataset,
+            'config': config,
+            'embedding': embedding,
+            'input-features-stats': input_features_stats,
+            'model-params': model_params,
+            'output-dir': output_dir,
+            'which-fold': which_fold
+        }
+
+        missing = [name for name, value in required_legacy.items() if value is None]
+        if missing:
+            click.echo(f"ERROR: Missing required legacy arguments: {', '.join('--' + m for m in missing)}", err=True)
+            sys.exit(1)
+
+        click.echo(f"Loading model from {model_params}...")
+        click.echo(f"Processing test data from {test_dataset}...")
+
+        # Create output directory
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Build arguments for test script
+        class Args:
+            pass
+
+        args = Args()
+        args.test_dataset = test_dataset
+        args.train_dataset = train_dataset
+        args.config = config
+        args.embedding = embedding
+        args.input_features_stats = input_features_stats
+        args.model_params = model_params
+        args.test_path = output_dir
+        args.test_name = output_name
+        args.which_fold = which_fold
+        args.task = task
+        args.normalize = normalize
+
+        # Import and run test logic
+        from Dietnet import test_external_dataset as test_module
+        test_module.test_with_args(args)
+
+        click.echo(f"✓ Predictions saved to {output_dir}/{output_name}_results.npz")
 
 
 @main.command()
@@ -471,6 +661,192 @@ def generate_embedding(exp_path, dataset, partition, output_name, task, label_fi
     embedding_module.generate_embedding_with_args(args)
 
     click.echo(f"✓ Embeddings generated: {exp_path}/{output_name}")
+
+
+@main.command()
+@click.option(
+    '--model',
+    type=str,
+    required=True,
+    help='Model preset (e.g., 1kgp_default) or path to model package directory.'
+)
+@click.option(
+    '--plink-prefix',
+    type=str,
+    required=True,
+    help='Input PLINK file prefix (without .bed/.bim/.fam).'
+)
+@click.option(
+    '--output-prefix',
+    type=str,
+    required=True,
+    help='Output preprocessed PLINK file prefix.'
+)
+@click.option(
+    '--plink-bin',
+    type=str,
+    default=None,
+    help='Path to PLINK binary (default: auto-detect).'
+)
+@click.option(
+    '--force',
+    is_flag=True,
+    help='Force re-preprocessing even if output exists.'
+)
+def preprocess_plink(model, plink_prefix, output_prefix, plink_bin, force):
+    """
+    Preprocess PLINK files to match model's SNP set and allele coding.
+
+    This command aligns test data to the model's reference SNPs and ensures
+    consistent allele coding using PLINK2's --alt1-allele force option.
+
+    Example:
+        dietnet preprocess-plink --model 1kgp_default \\
+                                 --plink-prefix /path/to/test_data \\
+                                 --output-prefix ./preprocessed/test
+    """
+    from pathlib import Path
+    from Dietnet.model_manager import get_model_path
+    from Dietnet.pretrained_models import PRETRAINED_MODELS
+    from Dietnet.helpers.plink_utils import preprocess_test_data_with_plink, find_plink_binary
+
+    # Resolve model path
+    if model in PRETRAINED_MODELS:
+        click.echo(f"Using model preset: {model}", err=True)
+        model_dir = Path(get_model_path(model))
+    else:
+        model_dir = Path(model)
+        if not model_dir.exists():
+            click.echo(f"ERROR: Model directory not found: {model_dir}", err=True)
+            sys.exit(1)
+        click.echo(f"Using local model: {model_dir}", err=True)
+
+    # Find first model package to get BIM file
+    seed_dirs = sorted(model_dir.glob('seed_*'))
+    if not seed_dirs:
+        click.echo(f"ERROR: No seed directories found in {model_dir}", err=True)
+        sys.exit(1)
+
+    fold_dir = seed_dirs[0] / 'fold_0'
+    bim_file = fold_dir / 'allpos.bim'
+
+    if not bim_file.exists():
+        click.echo(f"ERROR: Model BIM file not found: {bim_file}", err=True)
+        sys.exit(1)
+
+    # Find PLINK binary
+    if plink_bin is None:
+        plink_bin = find_plink_binary()
+    click.echo(f"Using PLINK: {plink_bin}", err=True)
+
+    # Preprocess
+    click.echo(f"Preprocessing PLINK data...", err=True)
+    click.echo(f"  Input: {plink_prefix}", err=True)
+    click.echo(f"  Output: {output_prefix}", err=True)
+
+    result = preprocess_test_data_with_plink(
+        test_plink_prefix=plink_prefix,
+        model_bim_file=str(bim_file),
+        output_prefix=output_prefix,
+        plink_bin=plink_bin,
+        force=force
+    )
+
+    click.echo(f"✓ Preprocessing complete: {result}", err=True)
+
+
+@main.command()
+@click.option(
+    '--predictions',
+    type=click.Path(exists=True),
+    required=True,
+    help='TSV file with predictions (from dietnet predict).'
+)
+@click.option(
+    '--labels',
+    type=click.Path(exists=True),
+    required=True,
+    help='TSV file with true labels (sample_id<tab>label).'
+)
+@click.option(
+    '--min-accuracy',
+    type=float,
+    default=None,
+    help='Minimum expected accuracy (exits with error if below).'
+)
+@click.option(
+    '--max-accuracy',
+    type=float,
+    default=None,
+    help='Maximum expected accuracy (exits with error if above).'
+)
+def check(predictions, labels, min_accuracy, max_accuracy):
+    """
+    Validate predictions against true labels.
+
+    Computes overall accuracy and per-class accuracy, optionally checking
+    against expected accuracy thresholds.
+
+    Example:
+        dietnet check --predictions predictions.tsv \\
+                      --labels labels.tsv \\
+                      --min-accuracy 0.85
+    """
+    import pandas as pd
+    import numpy as np
+
+    # Load data
+    pred_df = pd.read_csv(predictions, sep='\t')
+    labels_df = pd.read_csv(labels, sep='\t')
+
+    # Detect column names (handle both 'sample_id' and 'Sample')
+    pred_id_col = 'sample_id' if 'sample_id' in pred_df.columns else pred_df.columns[0]
+    label_id_col = labels_df.columns[0]  # First column is always sample ID
+    label_class_col = labels_df.columns[1]  # Second column is always the label
+
+    # Merge on sample IDs
+    merged = pred_df.merge(labels_df, left_on=pred_id_col, right_on=label_id_col)
+
+    if len(merged) == 0:
+        click.echo("ERROR: No matching samples found between predictions and labels", err=True)
+        sys.exit(1)
+
+    # Get true labels
+    true_labels = merged[label_class_col]
+    predicted_labels = merged['predicted_class']
+
+    # Overall accuracy
+    overall_accuracy = (predicted_labels == true_labels).mean()
+
+    click.echo("=" * 60)
+    click.echo("Prediction Validation Results")
+    click.echo("=" * 60)
+    click.echo(f"Total samples: {len(merged)}")
+    click.echo(f"Overall accuracy: {overall_accuracy:.2%}")
+    click.echo("")
+
+    # Per-class accuracy
+    click.echo("Per-class accuracy:")
+    click.echo("-" * 60)
+    for label in sorted(true_labels.unique()):
+        mask = true_labels == label
+        class_acc = (predicted_labels[mask] == true_labels[mask]).mean()
+        class_count = mask.sum()
+        click.echo(f"  {label:15s}: {class_acc:6.2%}  ({class_count:4d} samples)")
+    click.echo("=" * 60)
+
+    # Check thresholds
+    if min_accuracy is not None:
+        if overall_accuracy < min_accuracy:
+            click.echo(f"❌ FAILED: Accuracy {overall_accuracy:.2%} below minimum {min_accuracy:.2%}", err=True)
+            sys.exit(1)
+
+    if max_accuracy is not None:
+        if overall_accuracy > max_accuracy:
+            click.echo(f"❌ FAILED: Accuracy {overall_accuracy:.2%} above maximum {max_accuracy:.2%}", err=True)
+            sys.exit(1)
+
+    click.echo("✓ PASSED")
 
 
 @main.command()

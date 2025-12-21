@@ -219,22 +219,22 @@ class CombinedModel(nn.Module):
                  input_dropout=0., eps=1e-5, incl_bias=True, incl_softmax=False):
         super(CombinedModel, self).__init__()
 
-        # Initialize feat. embedding and discriminative networks
-        self.feat_emb = Feat_emb_net(n_feats, n_hidden_u_aux, param_init, aux_uniform_init_limit)
-        self.disc_net = Discrim_net2(n_feats, n_hidden_u_main, n_targets,
-                                     param_init, input_dropout, eps,
-                                     incl_bias, incl_softmax)
+        # Initialize auxiliary and main networks (using old naming for compatibility)
+        self.aux_net = Feat_emb_net(n_feats, n_hidden_u_aux, param_init, aux_uniform_init_limit)
+        self.main_net = Discrim_net2(n_feats, n_hidden_u_main, n_targets,
+                                      param_init, input_dropout, eps,
+                                      incl_bias, incl_softmax)
         self.fatLayer_weights = None
 
 
     def forward(self, emb, x_batch, save_layers=False):
-        # Forward pass in auxilliary net
-        feat_emb_model_out = self.feat_emb(emb)
-        # Forward pass in discrim net
-        self.fatLayer_weights = torch.transpose(feat_emb_model_out,1,0)
-        discrim_model_out = self.disc_net(x_batch, self.fatLayer_weights, save_layers)
+        # Forward pass in auxiliary net
+        aux_net_out = self.aux_net(emb)
+        # Forward pass in main net
+        self.fatLayer_weights = torch.transpose(aux_net_out, 1, 0)
+        main_net_out = self.main_net(x_batch, self.fatLayer_weights, save_layers)
 
-        return discrim_model_out
+        return main_net_out
 
 
 class Mlp(nn.Module):
