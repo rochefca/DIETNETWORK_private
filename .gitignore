@@ -14,3 +14,13 @@ Dietnet/Interpretability/experiment_scripts/*.sh
 DATA/
 EXPERIMENT_01/
 Test_dev/
+
+# Model cache and test data
+.cache/
+tests/data/
+tests/preprocessed_plink/
+tests/smoke_test_predictions.tsv
+tests/.ipynb_checkpoints/
+
+# Distribution packages
+*.tar.gz

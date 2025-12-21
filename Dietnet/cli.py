@@ -147,59 +147,117 @@ def train(exp_path, exp_name, config, dataset, partition, embedding,
 
 
 @main.command()
+# NEW MODEL PACKAGE APPROACH (Recommended)
+@click.option(
+    '--model',
+    type=str,
+    default=None,
+    help='Model preset (e.g., 1kgp_default) or path to model package directory.'
+)
+@click.option(
+    '--plink-prefix',
+    type=str,
+    default=None,
+    help='PLINK file prefix for test data (without .bed/.bim/.fam).'
+)
+@click.option(
+    '--output',
+    type=str,
+    default=None,
+    help='Output TSV file for predictions.'
+)
+# LEGACY HDF5 APPROACH (Deprecated)
 @click.option(
     '--test-dataset',
     type=click.Path(exists=True),
-    required=True,
-    help='HDF5 file containing test data.'
+    default=None,
+    help='[DEPRECATED] HDF5 file containing test data.'
 )
 @click.option(
     '--train-dataset',
     type=click.Path(exists=True),
-    required=True,
-    help='HDF5 file containing training data (for SNP alignment).'
+    default=None,
+    help='[DEPRECATED] HDF5 file containing training data (for SNP alignment).'
 )
 @click.option(
     '--config',
     type=click.Path(exists=True),
-    required=True,
-    help='YAML config file used for training.'
+    default=None,
+    help='[DEPRECATED] YAML config file used for training.'
 )
 @click.option(
     '--embedding',
     type=click.Path(exists=True),
-    required=True,
-    help='Genotype frequency embedding file from training.'
+    default=None,
+    help='[DEPRECATED] Genotype frequency embedding file from training.'
 )
 @click.option(
     '--input-features-stats',
     type=click.Path(exists=True),
-    required=True,
-    help='Input feature statistics from training (for normalization).'
+    default=None,
+    help='[DEPRECATED] Input feature statistics from training (for normalization).'
 )
 @click.option(
     '--model-params',
     type=click.Path(exists=True),
-    required=True,
-    help='Trained model checkpoint (.pt file).'
+    default=None,
+    help='[DEPRECATED] Trained model checkpoint (.pt file).'
 )
 @click.option(
     '--output-dir',
     type=click.Path(),
-    required=True,
-    help='Directory where predictions will be saved.'
+    default=None,
+    help='[DEPRECATED] Directory where predictions will be saved.'
 )
 @click.option(
     '--output-name',
     type=str,
     default='predictions',
-    help='Base name for output files (default: predictions).'
+    help='[DEPRECATED] Base name for output files (default: predictions).'
 )
 @click.option(
     '--which-fold',
     type=int,
-    required=True,
-    help='Which fold was used for training (0-indexed).'
+    default=None,
+    help='[DEPRECATED] Which fold was used for training (0-indexed).'
+)
+# COMMON OPTIONS
+@click.option(
+    '--seeds',
+    type=int,
+    multiple=True,
+    default=None,
+    help='Seeds to use (default: all in model package).'
+)
+@click.option(
+    '--folds',
+    type=int,
+    multiple=True,
+    default=None,
+    help='Folds to use (default: all in model package).'
+)
+@click.option(
+    '--batch-size',
+    type=int,
+    default=128,
+    help='Batch size for inference (default: 128).'
+)
+@click.option(
+    '--device',
+    type=str,
+    default=None,
+    help='Device: cpu or cuda (default: auto-detect).'
+)
+@click.option(
+    '--num-workers',
+    type=int,
+    default=0,
+    help='DataLoader workers (default: 0).'
+)
+@click.option(
+    '--force-download',
+    is_flag=True,
+    help='Force re-download of model preset (only for --model presets).'
 )
 @click.option(
     '--task',
@@ -210,57 +268,182 @@ def train(exp_path, exp_name, config, dataset, partition, embedding,
 @click.option(
     '--normalize/--no-normalize',
     default=True,
-    help='Apply normalization (should match training setting).'
+    help='Apply normalization (default: True).'
 )
-def predict(test_dataset, train_dataset, config, embedding, input_features_stats,
-            model_params, output_dir, output_name, which_fold, task, normalize):
+def predict(model, plink_prefix, output, test_dataset, train_dataset, config,
+            embedding, input_features_stats, model_params, output_dir, output_name,
+            which_fold, seeds, folds, batch_size, device, num_workers, force_download,
+            task, normalize):
     """
-    Run inference on an external dataset using a trained model.
+    Run inference on a test dataset using a trained model.
 
-    Aligns test SNPs to training SNPs and generates predictions.
+    NEW APPROACH (Recommended):
+        Use model packages with PLINK data:
 
-    Example:
-        dietnet predict --test-dataset test.hdf5 --train-dataset train.hdf5 \\
-                        --config config.yaml --embedding embedding.npz \\
-                        --input-features-stats input_stats.npz \\
-                        --model-params best_model.pt --output-dir ./results \\
-                        --which-fold 0
+        \b
+        # Using a preset model
+        dietnet predict --model 1kgp_default \\
+                        --plink-prefix /path/to/test_data \\
+                        --output predictions.tsv
+
+        \b
+        # Using a local model package
+        dietnet predict --model ./pretrained_1000g \\
+                        --plink-prefix /path/to/test_data \\
+                        --output predictions.tsv
+
+    LEGACY APPROACH (Deprecated):
+        The HDF5-based approach is deprecated. Please use model packages instead.
     """
-    # Import here to avoid loading heavy modules at CLI startup
+    import warnings
     import sys
     import os
+    import subprocess
     from pathlib import Path
 
-    # Add the parent directory to path to import from other_code
-    # We'll use the test_independent_dataset logic
-    click.echo(f"Loading model from {model_params}...")
-    click.echo(f"Processing test data from {test_dataset}...")
+    # Detect which approach is being used
+    using_model_package = model is not None
+    using_legacy_hdf5 = model_params is not None
 
-    # Create output directory
-    os.makedirs(output_dir, exist_ok=True)
+    if using_model_package and using_legacy_hdf5:
+        click.echo("ERROR: Cannot use both --model and --model-params. Choose one approach.", err=True)
+        sys.exit(1)
 
-    # Build arguments for test script
-    class Args:
-        pass
+    if not using_model_package and not using_legacy_hdf5:
+        click.echo("ERROR: Must provide either --model (new approach) or --model-params (legacy).", err=True)
+        click.echo("See 'dietnet predict --help' for usage examples.", err=True)
+        sys.exit(1)
 
-    args = Args()
-    args.test_dataset = test_dataset
-    args.train_dataset = train_dataset
-    args.config = config
-    args.embedding = embedding
-    args.input_features_stats = input_features_stats
-    args.model_params = model_params
-    args.test_path = output_dir
-    args.test_name = output_name
-    args.which_fold = which_fold
-    args.task = task
-    args.normalize = normalize
+    # ====================
+    # NEW MODEL PACKAGE APPROACH
+    # ====================
+    if using_model_package:
+        # Validate required arguments
+        if not plink_prefix:
+            click.echo("ERROR: --plink-prefix is required when using --model", err=True)
+            sys.exit(1)
+        if not output:
+            click.echo("ERROR: --output is required when using --model", err=True)
+            sys.exit(1)
 
-    # Import and run test logic
-    from Dietnet import test_external_dataset as test_module
-    test_module.test_with_args(args)
+        from Dietnet.model_manager import get_model_path
+        from Dietnet.pretrained_models import PRETRAINED_MODELS
 
-    click.echo(f"✓ Predictions saved to {output_dir}/{output_name}_results.npz")
+        # Resolve model path
+        if model in PRETRAINED_MODELS:
+            # Model preset - download if needed
+            click.echo(f"Using model preset: {model}")
+            model_dir = get_model_path(model, force_download=force_download)
+        else:
+            # Local path
+            model_dir = Path(model)
+            if not model_dir.exists():
+                click.echo(f"ERROR: Model directory not found: {model_dir}", err=True)
+                sys.exit(1)
+            click.echo(f"Using local model: {model_dir}")
+
+        # Determine device
+        if device is None:
+            import torch
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+        # Build command for predict_with_plink.py
+        cmd = [
+            sys.executable,
+            str(Path(__file__).parent / 'predict_with_plink.py'),
+            '--model-dir', str(model_dir),
+            '--plink-prefix', plink_prefix,
+            '--output', output,
+            '--batch-size', str(batch_size),
+            '--device', device,
+            '--num-workers', str(num_workers)
+        ]
+
+        if seeds:
+            cmd.extend(['--seeds'] + [str(s) for s in seeds])
+        if folds:
+            cmd.extend(['--folds'] + [str(f) for f in folds])
+
+        # Run inference
+        result = subprocess.run(cmd)
+        sys.exit(result.returncode)
+
+    # ====================
+    # LEGACY HDF5 APPROACH (DEPRECATED)
+    # ====================
+    else:
+        # Show deprecation warning
+        warnings.warn(
+            "\n"
+            "═══════════════════════════════════════════════════════════════\n"
+            "DEPRECATION WARNING: HDF5-based inference is deprecated!\n"
+            "═══════════════════════════════════════════════════════════════\n"
+            "\n"
+            "The HDF5-based inference approach (--model-params, --test-dataset)\n"
+            "is deprecated and will be removed in a future version.\n"
+            "\n"
+            "Please use the new model package approach instead:\n"
+            "\n"
+            "  dietnet predict --model 1kgp_default \\\n"
+            "                  --plink-prefix /path/to/data \\\n"
+            "                  --output predictions.tsv\n"
+            "\n"
+            "Benefits:\n"
+            "  • Simpler: One --model flag instead of 6 separate files\n"
+            "  • Faster: Works directly with PLINK files (no HDF5 conversion)\n"
+            "  • Scalable: Handles large datasets with memory mapping\n"
+            "  • Portable: Download pretrained models automatically\n"
+            "\n"
+            "═══════════════════════════════════════════════════════════════\n",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
+        # Validate required legacy arguments
+        required_legacy = {
+            'test-dataset': test_dataset,
+            'train-dataset': train_dataset,
+            'config': config,
+            'embedding': embedding,
+            'input-features-stats': input_features_stats,
+            'model-params': model_params,
+            'output-dir': output_dir,
+            'which-fold': which_fold
+        }
+
+        missing = [name for name, value in required_legacy.items() if value is None]
+        if missing:
+            click.echo(f"ERROR: Missing required legacy arguments: {', '.join('--' + m for m in missing)}", err=True)
+            sys.exit(1)
+
+        click.echo(f"Loading model from {model_params}...")
+        click.echo(f"Processing test data from {test_dataset}...")
+
+        # Create output directory
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Build arguments for test script
+        class Args:
+            pass
+
+        args = Args()
+        args.test_dataset = test_dataset
+        args.train_dataset = train_dataset
+        args.config = config
+        args.embedding = embedding
+        args.input_features_stats = input_features_stats
+        args.model_params = model_params
+        args.test_path = output_dir
+        args.test_name = output_name
+        args.which_fold = which_fold
+        args.task = task
+        args.normalize = normalize
+
+        # Import and run test logic
+        from Dietnet import test_external_dataset as test_module
+        test_module.test_with_args(args)
+
+        click.echo(f"✓ Predictions saved to {output_dir}/{output_name}_results.npz")
 
 
 @main.command()
