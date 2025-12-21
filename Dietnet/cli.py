@@ -260,6 +260,11 @@ def train(exp_path, exp_name, config, dataset, partition, embedding,
     help='Force re-download of model preset (only for --model presets).'
 )
 @click.option(
+    '--skip-preprocess',
+    is_flag=True,
+    help='Skip PLINK preprocessing (use if plink-prefix already preprocessed with preprocess-plink).'
+)
+@click.option(
     '--task',
     type=click.Choice(['classification', 'regression']),
     default='classification',
@@ -273,7 +278,7 @@ def train(exp_path, exp_name, config, dataset, partition, embedding,
 def predict(model, plink_prefix, output, test_dataset, train_dataset, config,
             embedding, input_features_stats, model_params, output_dir, output_name,
             which_fold, seeds, folds, batch_size, device, num_workers, force_download,
-            task, normalize):
+            skip_preprocess, task, normalize):
     """
     Run inference on a test dataset using a trained model.
 
@@ -363,6 +368,8 @@ def predict(model, plink_prefix, output, test_dataset, train_dataset, config,
             cmd.extend(['--seeds'] + [str(s) for s in seeds])
         if folds:
             cmd.extend(['--folds'] + [str(f) for f in folds])
+        if skip_preprocess:
+            cmd.append('--skip-preprocess')
 
         # Run inference
         result = subprocess.run(cmd)
@@ -654,6 +661,192 @@ def generate_embedding(exp_path, dataset, partition, output_name, task, label_fi
     embedding_module.generate_embedding_with_args(args)
 
     click.echo(f"✓ Embeddings generated: {exp_path}/{output_name}")
+
+
+@main.command()
+@click.option(
+    '--model',
+    type=str,
+    required=True,
+    help='Model preset (e.g., 1kgp_default) or path to model package directory.'
+)
+@click.option(
+    '--plink-prefix',
+    type=str,
+    required=True,
+    help='Input PLINK file prefix (without .bed/.bim/.fam).'
+)
+@click.option(
+    '--output-prefix',
+    type=str,
+    required=True,
+    help='Output preprocessed PLINK file prefix.'
+)
+@click.option(
+    '--plink-bin',
+    type=str,
+    default=None,
+    help='Path to PLINK binary (default: auto-detect).'
+)
+@click.option(
+    '--force',
+    is_flag=True,
+    help='Force re-preprocessing even if output exists.'
+)
+def preprocess_plink(model, plink_prefix, output_prefix, plink_bin, force):
+    """
+    Preprocess PLINK files to match model's SNP set and allele coding.
+
+    This command aligns test data to the model's reference SNPs and ensures
+    consistent allele coding using PLINK2's --alt1-allele force option.
+
+    Example:
+        dietnet preprocess-plink --model 1kgp_default \\
+                                 --plink-prefix /path/to/test_data \\
+                                 --output-prefix ./preprocessed/test
+    """
+    from pathlib import Path
+    from Dietnet.model_manager import get_model_path
+    from Dietnet.pretrained_models import PRETRAINED_MODELS
+    from Dietnet.helpers.plink_utils import preprocess_test_data_with_plink, find_plink_binary
+
+    # Resolve model path
+    if model in PRETRAINED_MODELS:
+        click.echo(f"Using model preset: {model}", err=True)
+        model_dir = Path(get_model_path(model))
+    else:
+        model_dir = Path(model)
+        if not model_dir.exists():
+            click.echo(f"ERROR: Model directory not found: {model_dir}", err=True)
+            sys.exit(1)
+        click.echo(f"Using local model: {model_dir}", err=True)
+
+    # Find first model package to get BIM file
+    seed_dirs = sorted(model_dir.glob('seed_*'))
+    if not seed_dirs:
+        click.echo(f"ERROR: No seed directories found in {model_dir}", err=True)
+        sys.exit(1)
+
+    fold_dir = seed_dirs[0] / 'fold_0'
+    bim_file = fold_dir / 'allpos.bim'
+
+    if not bim_file.exists():
+        click.echo(f"ERROR: Model BIM file not found: {bim_file}", err=True)
+        sys.exit(1)
+
+    # Find PLINK binary
+    if plink_bin is None:
+        plink_bin = find_plink_binary()
+    click.echo(f"Using PLINK: {plink_bin}", err=True)
+
+    # Preprocess
+    click.echo(f"Preprocessing PLINK data...", err=True)
+    click.echo(f"  Input: {plink_prefix}", err=True)
+    click.echo(f"  Output: {output_prefix}", err=True)
+
+    result = preprocess_test_data_with_plink(
+        test_plink_prefix=plink_prefix,
+        model_bim_file=str(bim_file),
+        output_prefix=output_prefix,
+        plink_bin=plink_bin,
+        force=force
+    )
+
+    click.echo(f"✓ Preprocessing complete: {result}", err=True)
+
+
+@main.command()
+@click.option(
+    '--predictions',
+    type=click.Path(exists=True),
+    required=True,
+    help='TSV file with predictions (from dietnet predict).'
+)
+@click.option(
+    '--labels',
+    type=click.Path(exists=True),
+    required=True,
+    help='TSV file with true labels (sample_id<tab>label).'
+)
+@click.option(
+    '--min-accuracy',
+    type=float,
+    default=None,
+    help='Minimum expected accuracy (exits with error if below).'
+)
+@click.option(
+    '--max-accuracy',
+    type=float,
+    default=None,
+    help='Maximum expected accuracy (exits with error if above).'
+)
+def check(predictions, labels, min_accuracy, max_accuracy):
+    """
+    Validate predictions against true labels.
+
+    Computes overall accuracy and per-class accuracy, optionally checking
+    against expected accuracy thresholds.
+
+    Example:
+        dietnet check --predictions predictions.tsv \\
+                      --labels labels.tsv \\
+                      --min-accuracy 0.85
+    """
+    import pandas as pd
+    import numpy as np
+
+    # Load data
+    pred_df = pd.read_csv(predictions, sep='\t')
+    labels_df = pd.read_csv(labels, sep='\t')
+
+    # Detect column names (handle both 'sample_id' and 'Sample')
+    pred_id_col = 'sample_id' if 'sample_id' in pred_df.columns else pred_df.columns[0]
+    label_id_col = labels_df.columns[0]  # First column is always sample ID
+    label_class_col = labels_df.columns[1]  # Second column is always the label
+
+    # Merge on sample IDs
+    merged = pred_df.merge(labels_df, left_on=pred_id_col, right_on=label_id_col)
+
+    if len(merged) == 0:
+        click.echo("ERROR: No matching samples found between predictions and labels", err=True)
+        sys.exit(1)
+
+    # Get true labels
+    true_labels = merged[label_class_col]
+    predicted_labels = merged['predicted_class']
+
+    # Overall accuracy
+    overall_accuracy = (predicted_labels == true_labels).mean()
+
+    click.echo("=" * 60)
+    click.echo("Prediction Validation Results")
+    click.echo("=" * 60)
+    click.echo(f"Total samples: {len(merged)}")
+    click.echo(f"Overall accuracy: {overall_accuracy:.2%}")
+    click.echo("")
+
+    # Per-class accuracy
+    click.echo("Per-class accuracy:")
+    click.echo("-" * 60)
+    for label in sorted(true_labels.unique()):
+        mask = true_labels == label
+        class_acc = (predicted_labels[mask] == true_labels[mask]).mean()
+        class_count = mask.sum()
+        click.echo(f"  {label:15s}: {class_acc:6.2%}  ({class_count:4d} samples)")
+    click.echo("=" * 60)
+
+    # Check thresholds
+    if min_accuracy is not None:
+        if overall_accuracy < min_accuracy:
+            click.echo(f"❌ FAILED: Accuracy {overall_accuracy:.2%} below minimum {min_accuracy:.2%}", err=True)
+            sys.exit(1)
+
+    if max_accuracy is not None:
+        if overall_accuracy > max_accuracy:
+            click.echo(f"❌ FAILED: Accuracy {overall_accuracy:.2%} above maximum {max_accuracy:.2%}", err=True)
+            sys.exit(1)
+
+    click.echo("✓ PASSED")
 
 
 @main.command()
