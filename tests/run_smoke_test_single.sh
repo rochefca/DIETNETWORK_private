@@ -39,14 +39,11 @@ echo "Step 2/4: Preprocessing PLINK data with model alignment..."
 PLINK_BASE="1000G.2504_WGS30x.GSA17k_MHI.intersectGSA.miss10perc.maf0.05.pruned.autosomes.noHLA.phased_imputed_V1"
 PLINK_PREFIX="$TEST_DATA_DIR/$PLINK_BASE"
 
-# Use absolute paths for preprocessed files
-PREPROCESSED_DIR="$SCRIPT_DIR/preprocessed_plink"
+OUTPUT_DIR="$SCRIPT_DIR/outputs"
+PREPROCESSED_DIR="$OUTPUT_DIR/preprocessed_plink"
 PREPROCESSED_PREFIX="$PREPROCESSED_DIR/test_preprocessed"
 
 mkdir -p "$PREPROCESSED_DIR"
-
-# Convert to absolute path
-PREPROCESSED_PREFIX="$(cd "$SCRIPT_DIR" && pwd)/preprocessed_plink/test_preprocessed"
 
 dietnet preprocess-plink \
     --model 1kgp_default \
@@ -58,7 +55,10 @@ echo ""
 echo "Step 3/4: Running inference with seed $SEED fold $FOLD..."
 
 LABELS="$TEST_DATA_DIR/labels_pop_subsampleV1.tsv"
-OUTPUT="$SCRIPT_DIR/single_model_predictions.tsv"
+OUTPUT="$OUTPUT_DIR/single_model_predictions.tsv"
+LOGITS="$OUTPUT_DIR/single_model_predictions_logits.npz"
+HIDDEN="$OUTPUT_DIR/single_model_predictions_hidden.npz"
+mkdir -p "$OUTPUT_DIR"
 
 dietnet predict \
     --model 1kgp_default \
@@ -69,7 +69,9 @@ dietnet predict \
     --batch-size 256 \
     --device cpu \
     --num-workers 4 \
-    --skip-preprocess
+    --skip-preprocess \
+    --save-logits "$LOGITS" \
+    --save-hidden "$HIDDEN"
 
 # Step 4: Validate predictions
 echo ""

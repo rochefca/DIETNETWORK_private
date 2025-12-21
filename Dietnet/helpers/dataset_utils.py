@@ -113,7 +113,7 @@ class PLINKFoldDataset(torch.utils.data.Dataset):
         return samples
 
 
-def load_plink_genotypes(plink_prefix, cache_file=None, use_memmap=True):
+def load_plink_genotypes(plink_prefix, cache_file=None, use_memmap=True, verbose=True):
     """
     Load genotypes from PLINK files with optional memory mapping for scalability.
 
@@ -147,22 +147,27 @@ def load_plink_genotypes(plink_prefix, cache_file=None, use_memmap=True):
     if cache_file and os.path.exists(cache_file):
         # Decide whether to use memory mapping based on dataset size
         if use_memmap and dataset_size_gb > 2.0:  # Use memmap for datasets > 2GB
-            print(f'Loading cached genotypes from {cache_file} (memory-mapped)')
-            print(f'Dataset size: {dataset_size_gb:.2f}GB - using disk-based access for scalability')
+            if verbose:
+                print(f'Loading cached genotypes from {cache_file} (memory-mapped)')
+                print(f'Dataset size: {dataset_size_gb:.2f}GB - using disk-based access for scalability')
             genotypes = np.load(cache_file, mmap_mode='r')  # Read-only memory map
         else:
-            print(f'Loading cached genotypes from {cache_file}')
+            if verbose:
+                print(f'Loading cached genotypes from {cache_file}')
             genotypes = np.load(cache_file)
-        print(f'Loaded cached genotypes: {genotypes.shape}')
+        if verbose:
+            print(f'Loaded cached genotypes: {genotypes.shape}')
         return genotypes, fam_data, bim_data
 
     # Load from PLINK files
-    print(f'Loading {n_markers:,} markers for {n_samples:,} samples...')
-    print(f'Dataset size: {dataset_size_gb:.2f}GB')
+    if verbose:
+        print(f'Loading {n_markers:,} markers for {n_samples:,} samples...')
+        print(f'Dataset size: {dataset_size_gb:.2f}GB')
 
     if cache_file and use_memmap and dataset_size_gb > 2.0:
         # Create memory-mapped file for large datasets
-        print('Creating memory-mapped cache file for scalability')
+        if verbose:
+            print('Creating memory-mapped cache file for scalability')
         genotypes = np.lib.format.open_memmap(
             cache_file,
             mode='w+',
@@ -174,15 +179,25 @@ def load_plink_genotypes(plink_prefix, cache_file=None, use_memmap=True):
         genotypes = np.zeros([n_samples, n_markers], dtype=np.int8)
 
     # Iterate through markers and fill array with progress bar
-    for i, (marker_id, marker_genotypes) in enumerate(tqdm(pedfile, total=n_markers, desc='Loading markers', unit='markers')):
+    for i, (marker_id, marker_genotypes) in enumerate(
+        tqdm(
+            pedfile,
+            total=n_markers,
+            desc='Loading markers',
+            unit='markers',
+            disable=not verbose
+        )
+    ):
         genotypes[:, i] = marker_genotypes
 
-    print(f'✓ Loaded genotypes: {genotypes.shape}')
+    if verbose:
+        print(f'✓ Loaded genotypes: {genotypes.shape}')
 
     # Flush to disk if memory-mapped
     if isinstance(genotypes, np.memmap):
         genotypes.flush()
-        print(f'✓ Flushed to disk: {cache_file}')
+        if verbose:
+            print(f'✓ Flushed to disk: {cache_file}')
         # Reopen as read-only for safety
         genotypes = np.load(cache_file, mmap_mode='r')
 
@@ -197,20 +212,23 @@ def shuffle(indices, seed=None):
     np.random.shuffle(indices)
 
 
-def partition(indices, nb_folds, train_valid_ratio, seed=None):
+def partition(indices, nb_folds, train_valid_ratio, seed=None, labels=None):
     """
-    The partitions contains indices of train. valid and test sets
-    for each fold.
-    If folds test sets with equal nb of samples is not possible:
-    test set of last fold will have more samples
-    The number of extra samples will always be < nb_folds
+    Partition indices into train/valid/test for each fold.
+
+    If labels are provided, performs stratified splitting to preserve label
+    proportions per fold.
     """
-    # Shuffle data
+    if labels is not None:
+        return _partition_stratified(indices, labels, nb_folds, train_valid_ratio, seed)
+    return _partition_unstratified(indices, nb_folds, train_valid_ratio, seed)
+
+
+def _partition_unstratified(indices, nb_folds, train_valid_ratio, seed=None):
     if seed is not None:
         np.random.seed(seed)
     shuffle(indices, seed=seed)
 
-    # Get indices of examples in test set for each fold
     step = math.floor(len(indices)/nb_folds)
     split_pos = [i for i in range(0, len(indices), step)]
 
@@ -222,28 +240,63 @@ def partition(indices, nb_folds, train_valid_ratio, seed=None):
 
     test_indices_byfold.append(indices[start:]) # append last fold
 
-    # Get indices of train+valid sets for each fold
     train_indices_byfold = []
     valid_indices_byfold = []
     for i in range(nb_folds):
         other_folds = [f for f in range(nb_folds) if f!=i]
-        # Concat test indices of other folds: this is train+valid indices
         train_valid_indices = np.concatenate(
                 [test_indices_byfold[f] for f in other_folds]
                 )
-        # Split into train and valid sets
         train_indices, valid_indices = split(train_valid_indices,
                 train_valid_ratio, seed)
         train_indices_byfold.append(train_indices)
         valid_indices_byfold.append(valid_indices)
 
-    # Train, valid and test indices of examples for each fold
     indices_byfold = []
     for train_indices, valid_indices, test_indices in zip(
             train_indices_byfold, valid_indices_byfold, test_indices_byfold):
         indices_byfold.append([train_indices, valid_indices, test_indices])
 
     return indices_byfold
+
+
+def _partition_stratified(indices, labels, nb_folds, train_valid_ratio, seed=None):
+    rng = np.random.default_rng(seed)
+    indices = np.asarray(indices)
+    labels = np.asarray(labels)
+
+    unique_labels = np.unique(labels)
+    per_label_splits = {}
+    for lab in unique_labels:
+        lab_indices = indices[labels == lab]
+        lab_indices = lab_indices.copy()
+        rng.shuffle(lab_indices)
+        per_label_splits[lab] = np.array_split(lab_indices, nb_folds)
+
+    folds = []
+    for fold in range(nb_folds):
+        train_parts = []
+        valid_parts = []
+        test_parts = []
+
+        for lab in unique_labels:
+            splits = per_label_splits[lab]
+            test_part = splits[fold]
+            remainder = np.concatenate([splits[i] for i in range(nb_folds) if i != fold])
+            rng.shuffle(remainder)
+
+            n_train = int(math.floor(train_valid_ratio * len(remainder)))
+            train_parts.append(remainder[:n_train])
+            valid_parts.append(remainder[n_train:])
+            test_parts.append(test_part)
+
+        train_indices = np.concatenate(train_parts) if train_parts else np.array([], dtype=int)
+        valid_indices = np.concatenate(valid_parts) if valid_parts else np.array([], dtype=int)
+        test_indices = np.concatenate(test_parts) if test_parts else np.array([], dtype=int)
+
+        folds.append([train_indices, valid_indices, test_indices])
+
+    return folds
 
 
 def split(indices, split_ratio, seed):
@@ -476,7 +529,7 @@ class InferenceDataset(torch.utils.data.Dataset):
     - Normalization (using model's training stats)
     """
 
-    def __init__(self, plink_prefix, model_package, use_memmap=True, cache_dir=None):
+    def __init__(self, plink_prefix, model_package, use_memmap=True, cache_dir=None, verbose=True):
         """
         Args:
             plink_prefix: Path to PLINK files (without .bed/.bim/.fam extension)
@@ -490,12 +543,14 @@ class InferenceDataset(torch.utils.data.Dataset):
         self.plink_prefix = plink_prefix
         self.model_package = model_package
 
-        print(f"\n=== Preparing inference dataset ===")
-        print(f"Test PLINK: {plink_prefix}")
-        print(f"Model: seed {model_package.seed}, fold {model_package.fold}")
+        if verbose:
+            print(f"\n=== Preparing inference dataset ===")
+            print(f"Test PLINK: {plink_prefix}")
+            print(f"Model: seed {model_package.seed}, fold {model_package.fold}")
 
         # Load test genotypes
-        print("\nLoading test genotypes...")
+        if verbose:
+            print("\nLoading test genotypes...")
         cache_file = None
         if cache_dir:
             cache_file = Path(cache_dir) / f"{Path(plink_prefix).name}_genotypes.npy"
@@ -503,14 +558,17 @@ class InferenceDataset(torch.utils.data.Dataset):
         self.genotypes, self.fam_data, self.bim_data = load_plink_genotypes(
             plink_prefix,
             cache_file=cache_file,
-            use_memmap=use_memmap
+            use_memmap=use_memmap,
+            verbose=verbose
         )
 
         self.n_samples = len(self.fam_data)
-        print(f"Loaded {self.n_samples} samples, {len(self.bim_data)} SNPs")
+        if verbose:
+            print(f"Loaded {self.n_samples} samples, {len(self.bim_data)} SNPs")
 
         # Create SNP alignment mapping
-        print("\nAligning SNPs to model...")
+        if verbose:
+            print("\nAligning SNPs to model...")
         test_bim_path = f"{plink_prefix}.bim"
         self.snp_mapping, self.alignment_info = create_snp_mapping(
             test_bim=test_bim_path,
@@ -519,7 +577,12 @@ class InferenceDataset(torch.utils.data.Dataset):
         )
 
         # Check alignment quality (warns if poor overlap)
-        check_alignment_quality(self.alignment_info, min_overlap=0.1, raise_on_poor=False)
+        check_alignment_quality(
+            self.alignment_info,
+            min_overlap=0.1,
+            raise_on_poor=False,
+            verbose=verbose
+        )
 
         # Load model's input statistics for imputation and normalization
         input_stats = model_package.input_stats
@@ -531,7 +594,8 @@ class InferenceDataset(torch.utils.data.Dataset):
             # If no std available, compute from means (won't normalize, just impute)
             self.training_stds = torch.ones_like(self.training_means)
 
-        print(f"✓ Inference dataset ready: {self.n_samples} samples")
+        if verbose:
+            print(f"✓ Inference dataset ready: {self.n_samples} samples")
 
     def __len__(self):
         return self.n_samples

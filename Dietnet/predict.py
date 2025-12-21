@@ -7,9 +7,9 @@ Supports single model or ensemble prediction across multiple seeds/folds.
 
 import argparse
 import sys
+from collections import Counter
 from pathlib import Path
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -81,7 +81,10 @@ def predict_single_model(
     plink_prefix,
     device='cpu',
     batch_size=128,
-    num_workers=0
+    num_workers=0,
+    verbose=True,
+    return_logits=False,
+    return_hidden=False
 ):
     """
     Run inference with a single model.
@@ -94,14 +97,14 @@ def predict_single_model(
         num_workers: Number of data loader workers
 
     Returns:
-        Tuple of (sample_ids, predictions, probabilities)
+        Tuple of (sample_ids, predictions, probabilities, raw_logits, hidden_reps)
     """
-    print(f"\n{'='*60}")
-    print(f"Running inference with model: seed {model_package.seed}, fold {model_package.fold}")
-    print(f"{'='*60}")
+    if verbose:
+        print(f"\nRunning inference with model: seed {model_package.seed}, fold {model_package.fold}")
 
     # Load model
-    print("\nLoading model...")
+    if verbose:
+        print("\nLoading model...")
     model = load_model_from_package(model_package, device=device)
 
     # Load embedding for this model
@@ -119,7 +122,8 @@ def predict_single_model(
     dataset = InferenceDataset(
         plink_prefix=plink_prefix,
         model_package=model_package,
-        use_memmap=True
+        use_memmap=True,
+        verbose=verbose
     )
 
     # Create data loader
@@ -132,17 +136,29 @@ def predict_single_model(
     )
 
     # Run inference
-    print(f"\nRunning inference on {len(dataset)} samples...")
+    if verbose:
+        print(f"\nRunning inference on {len(dataset)} samples...")
     all_sample_ids = []
     all_logits = []
+    all_hidden = []
 
     with torch.no_grad():
-        for batch_geno, batch_sample_ids in tqdm(loader, desc="Inference"):
+        for batch_geno, batch_sample_ids in tqdm(
+            loader,
+            desc="Inference",
+            disable=not verbose,
+            leave=False
+        ):
             # Move to device
             batch_geno = batch_geno.to(device)
 
             # Forward pass (pass embedding and batch)
-            logits = model(embedding, batch_geno)
+            if return_hidden or return_logits:
+                hidden_batch, logits = model(embedding, batch_geno, save_layers=True)
+                if return_hidden:
+                    all_hidden.append(hidden_batch.cpu())
+            else:
+                logits = model(embedding, batch_geno)
 
             # Store results
             all_logits.append(logits.cpu())
@@ -154,8 +170,10 @@ def predict_single_model(
     # Get predictions and probabilities
     probabilities = F.softmax(all_logits, dim=1).numpy()
     predictions = torch.argmax(all_logits, dim=1).numpy()
+    raw_logits = all_logits.numpy() if return_logits else None
+    hidden_reps = torch.cat(all_hidden, dim=0).numpy() if all_hidden else None
 
-    return all_sample_ids, predictions, probabilities
+    return all_sample_ids, predictions, probabilities, raw_logits, hidden_reps
 
 
 def ensemble_predict(
@@ -164,7 +182,9 @@ def ensemble_predict(
     device='cpu',
     batch_size=128,
     num_workers=0,
-    method='vote'
+    method='vote',
+    save_logits=False,
+    save_hidden=False
 ):
     """
     Run ensemble inference with multiple models.
@@ -178,7 +198,8 @@ def ensemble_predict(
         method: 'vote' for majority voting or 'average' for probability averaging
 
     Returns:
-        Tuple of (sample_ids, predictions, probabilities, individual_predictions)
+        Tuple of (sample_ids, predictions, probabilities, individual_predictions,
+                  agg_logits, per_model_logits, per_model_hidden)
     """
     print(f"\n{'='*60}")
     print(f"Running ensemble inference with {len(model_packages)} models")
@@ -187,16 +208,22 @@ def ensemble_predict(
 
     all_predictions = []
     all_probabilities = []
+    all_logits = []
+    all_hidden = []
     sample_ids = None
 
-    for i, pkg in enumerate(model_packages):
-        print(f"\nModel {i+1}/{len(model_packages)}")
-        sids, preds, probs = predict_single_model(
+    model_bar = tqdm(model_packages, desc="Models", unit="model")
+    for i, pkg in enumerate(model_bar):
+        model_bar.set_postfix_str(f"seed {pkg.seed} fold {pkg.fold}")
+        sids, preds, probs, logits, hidden = predict_single_model(
             model_package=pkg,
             plink_prefix=plink_prefix,
             device=device,
             batch_size=batch_size,
-            num_workers=num_workers
+            num_workers=num_workers,
+            verbose=(i == 0),
+            return_logits=save_logits,
+            return_hidden=save_hidden
         )
 
         if sample_ids is None:
@@ -207,10 +234,16 @@ def ensemble_predict(
 
         all_predictions.append(preds)
         all_probabilities.append(probs)
+        if save_logits and logits is not None:
+            all_logits.append(logits)
+        if save_hidden and hidden is not None:
+            all_hidden.append(hidden)
 
     # Stack predictions and probabilities
     all_predictions = np.stack(all_predictions, axis=0)  # Shape: (n_models, n_samples)
     all_probabilities = np.stack(all_probabilities, axis=0)  # Shape: (n_models, n_samples, n_classes)
+    per_model_logits = np.array(all_logits) if all_logits else None
+    per_model_hidden = np.array(all_hidden) if all_hidden else None
 
     # Compute ensemble prediction
     if method == 'vote':
@@ -227,7 +260,17 @@ def ensemble_predict(
 
     print(f"\n✓ Ensemble inference complete")
 
-    return sample_ids, ensemble_predictions, ensemble_probabilities, all_predictions
+    ensemble_logits = np.mean(per_model_logits, axis=0) if per_model_logits is not None else None
+
+    return (
+        sample_ids,
+        ensemble_predictions,
+        ensemble_probabilities,
+        all_predictions,
+        ensemble_logits,
+        per_model_logits,
+        per_model_hidden
+    )
 
 
 def save_predictions(
@@ -239,40 +282,37 @@ def save_predictions(
     individual_predictions=None
 ):
     """
-    Save predictions to a TSV file.
+    Save predictions in a compact, human-readable format.
 
-    Args:
-        output_file: Path to output file
-        sample_ids: List of sample IDs
-        predictions: Array of predicted class indices
-        probabilities: Array of class probabilities
-        label_mapping: Dict mapping label names to indices
-        individual_predictions: Optional array of individual model predictions
+    Single model:
+        <sample_id> <prediction>
+
+    Ensemble:
+        <sample_id> <labelA>(count) <labelB>(count) ...
     """
     # Invert label mapping
     idx_to_label = {idx: label for label, idx in label_mapping.items()}
+    sample_strs = [str(sid) for sid in sample_ids]
+    id_width = max(len(sid) for sid in sample_strs)
+    lines = []
 
-    # Create output dataframe
-    df = pd.DataFrame({
-        'sample_id': sample_ids,
-        'predicted_class': [idx_to_label[idx] for idx in predictions],
-        'predicted_idx': predictions,
-        'max_probability': np.max(probabilities, axis=1)
-    })
+    if individual_predictions is not None and len(np.atleast_2d(individual_predictions)) > 0:
+        votes = np.atleast_2d(individual_predictions)
+        for i, sid in enumerate(sample_strs):
+            counts = Counter(votes[:, i])
+            ordered = sorted(counts.items(), key=lambda item: (-item[1], idx_to_label[item[0]]))
+            label_tokens = [f"{idx_to_label[idx]}({count})" for idx, count in ordered]
+            lines.append(f"{sid.rjust(id_width)} " + " ".join(label_tokens))
+    else:
+        for sid, pred in zip(sample_strs, predictions):
+            lines.append(f"{sid.rjust(id_width)} {idx_to_label[pred]}")
 
-    # Add individual class probabilities
-    for label, idx in sorted(label_mapping.items(), key=lambda x: x[1]):
-        df[f'prob_{label}'] = probabilities[:, idx]
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines) + "\n")
 
-    # Add individual model predictions if available (ensemble)
-    if individual_predictions is not None:
-        for i in range(individual_predictions.shape[0]):
-            df[f'model_{i}_pred'] = [idx_to_label[idx] for idx in individual_predictions[i]]
-
-    # Save to file
-    df.to_csv(output_file, sep='\t', index=False)
-    print(f"\n✓ Saved predictions to {output_file}")
-    print(f"  {len(df)} samples")
+    print(f"✓ Saved predictions to {output_path}")
+    print(f"  {len(sample_ids)} samples")
     print(f"  {len(label_mapping)} classes")
 
 
@@ -299,7 +339,7 @@ def main():
         '--output',
         type=str,
         required=True,
-        help='Output file for predictions (.tsv)'
+        help='Output file for predictions (text)'
     )
 
     parser.add_argument(
@@ -346,6 +386,18 @@ def main():
         default=0,
         help='Number of data loader workers (default: 0)'
     )
+    parser.add_argument(
+        '--save-logits',
+        type=str,
+        default=None,
+        help='Optional path to save raw logits/probabilities (.npz)'
+    )
+    parser.add_argument(
+        '--save-hidden',
+        type=str,
+        default=None,
+        help='Optional path to save final hidden representations (.npz)'
+    )
 
     args = parser.parse_args()
 
@@ -367,27 +419,44 @@ def main():
 
     # Get label mapping from first package (should be same for all)
     label_mapping = model_packages[0].label_mapping
+    agg_logits = None
+    per_model_logits = None
+    per_model_hidden = None
 
     # Run inference
     if len(model_packages) == 1:
         # Single model
-        sample_ids, predictions, probabilities = predict_single_model(
+        sample_ids, predictions, probabilities, raw_logits, hidden_reps = predict_single_model(
             model_package=model_packages[0],
             plink_prefix=args.plink_prefix,
             device=args.device,
             batch_size=args.batch_size,
-            num_workers=args.num_workers
+            num_workers=args.num_workers,
+            return_logits=bool(args.save_logits),
+            return_hidden=bool(args.save_hidden)
         )
         individual_preds = None
+        agg_logits = raw_logits
+        per_model_hidden = hidden_reps
     else:
         # Ensemble
-        sample_ids, predictions, probabilities, individual_preds = ensemble_predict(
+        (
+            sample_ids,
+            predictions,
+            probabilities,
+            individual_preds,
+            agg_logits,
+            per_model_logits,
+            per_model_hidden
+        ) = ensemble_predict(
             model_packages=model_packages,
             plink_prefix=args.plink_prefix,
             device=args.device,
             batch_size=args.batch_size,
             num_workers=args.num_workers,
-            method=args.ensemble_method
+            method=args.ensemble_method,
+            save_logits=bool(args.save_logits),
+            save_hidden=bool(args.save_hidden)
         )
 
     # Save predictions
@@ -399,6 +468,43 @@ def main():
         label_mapping=label_mapping,
         individual_predictions=individual_preds
     )
+
+    def save_extra_outputs(path, sample_ids, label_mapping, **arrays):
+        output_path = Path(path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        idx_to_label = {idx: label for label, idx in label_mapping.items()}
+        payload = {
+            "sample_id": np.array(sample_ids),
+            "label_names": np.array([idx_to_label[i] for i in range(len(idx_to_label))])
+        }
+        for key, value in arrays.items():
+            if value is not None:
+                payload[key] = value
+        np.savez(output_path, **payload)
+        print(f"✓ Saved extras to {output_path}")
+
+    if args.save_logits:
+        save_extra_outputs(
+            path=args.save_logits,
+            sample_ids=sample_ids,
+            label_mapping=label_mapping,
+            logits=agg_logits,
+            probabilities=probabilities,
+            per_model_logits=per_model_logits,
+            seeds=seeds,
+            folds=folds
+        )
+
+    if args.save_hidden:
+        save_extra_outputs(
+            path=args.save_hidden,
+            sample_ids=sample_ids,
+            label_mapping=label_mapping,
+            hidden=per_model_hidden if len(model_packages) == 1 else None,
+            per_model_hidden=per_model_hidden if len(model_packages) > 1 else None,
+            seeds=seeds,
+            folds=folds
+        )
 
     print("\n✓ Inference complete!")
 

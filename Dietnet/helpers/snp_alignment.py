@@ -175,7 +175,8 @@ def check_alignment_quality(
     alignment_info: Dict,
     min_overlap: float = 0.5,
     warn_overlap: float = 0.8,
-    raise_on_poor: bool = False
+    raise_on_poor: bool = False,
+    verbose: bool = True
 ) -> bool:
     """
     Check alignment quality and issue warnings/errors as appropriate.
@@ -196,11 +197,12 @@ def check_alignment_quality(
     n_matched = alignment_info['n_matched']
     n_total = alignment_info['n_model_snps']
 
-    print(f"\nSNP Alignment Summary:")
-    print(f"  Model SNPs: {n_total}")
-    print(f"  Test SNPs: {alignment_info['n_test_snps']}")
-    print(f"  Matched: {n_matched} ({overlap:.1%})")
-    print(f"  Missing: {alignment_info['n_missing']} ({1-overlap:.1%})")
+    if verbose:
+        print(f"\nSNP Alignment Summary:")
+        print(f"  Model SNPs: {n_total}")
+        print(f"  Test SNPs: {alignment_info['n_test_snps']}")
+        print(f"  Matched: {n_matched} ({overlap:.1%})")
+        print(f"  Missing: {alignment_info['n_missing']} ({1-overlap:.1%})")
 
     if overlap < min_overlap:
         msg = (f"Poor SNP overlap: {overlap:.1%} < {min_overlap:.1%}. "
@@ -209,16 +211,19 @@ def check_alignment_quality(
         if raise_on_poor:
             raise ValueError(msg)
         else:
-            print(f"\n⚠️  WARNING: {msg}")
-            print("Inference will continue, but predictions may be unreliable.")
+            if verbose:
+                print(f"\n⚠️  WARNING: {msg}")
+                print("Inference will continue, but predictions may be unreliable.")
             return False
 
     elif overlap < warn_overlap:
-        print(f"\n⚠️  Note: SNP overlap is {overlap:.1%}, which is below {warn_overlap:.1%}.")
-        print("Missing SNPs will be imputed with training means.")
+        if verbose:
+            print(f"\n⚠️  Note: SNP overlap is {overlap:.1%}, which is below {warn_overlap:.1%}.")
+            print("Missing SNPs will be imputed with training means.")
 
     else:
-        print(f"\n✓ Good SNP overlap: {overlap:.1%}")
+        if verbose:
+            print(f"\n✓ Good SNP overlap: {overlap:.1%}")
 
     return True
 
