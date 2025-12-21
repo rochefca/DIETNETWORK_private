@@ -89,7 +89,80 @@ dietnet predict --model ./pretrained_1000g \
 - `1kgp_default`: 1000 Genomes Phase 3 (24 populations, single model)
 - `hgdp_ukbb`: HGDP+1KGP for UKBB inference (coming soon)
 
-## Training from Scratch
+## Train on PLINK Data (recommended)
+
+Train directly from PLINK files and produce packaged models (`seed_X/fold_Y` with `model.pt`, `metadata.json`, `snps.txt`, `input_stats.npz`, `embedding.npz`, `label_mapping.json`, `allpos.bim`):
+
+```bash
+# 1) Partition your PLINK dataset (optionally stratify by population)
+dietnet partition \
+    --exp-path ./data \
+    --dataset train.bed \
+    --nb-folds 5 \
+    --stratify \
+    --label-file labels.tsv   # required for stratified PLINK
+
+# 2) Compute embeddings per fold
+dietnet generate-embedding \
+    --exp-path ./data \
+    --dataset train.bed \
+    --label-file labels.tsv \
+    --output-name embedding.npz
+
+# 3) Compute input stats (means/stds) per fold
+python Dietnet/compute_input_features_mean.py \
+    --exp-path ./data \
+    --dataset train.bed \
+    --partition partitioned_idx.npz \
+    --out input_features_means.npz
+
+# 4) Train and package a single model (default seed, all folds)
+dietnet train \
+    --exp-path ./data \
+    --exp-name my_experiment \
+    --config config.yaml \
+    --plink-prefix ./data/train \
+    --label-file labels.tsv \
+    --folds 0   # pick one fold if you only want a single model
+
+# 5) Train an ensemble across seeds/folds
+dietnet train \
+    --exp-path ./data \
+    --exp-name my_experiment \
+    --config config.yaml \
+    --plink-prefix ./data/train \
+    --label-file labels.tsv \
+    --seeds 42 43 44 \
+    --folds 0 1 2 3 4 \
+    --output-dir ./my_packages   # optional override
+```
+
+Packages land in `<exp-path>/<exp-name>_packages/seed_*/fold_*/` by default and are ready for `dietnet predict`.
+
+## Inference (presets or your own packages)
+
+### Preset models (downloaded automatically)
+```bash
+dietnet predict --model 1kgp_default \
+                --plink-prefix /path/to/test_data \
+                --output predictions.tsv
+```
+
+### Your own packaged models
+Point `--model` to the directory that contains `seed_*` folders (the parent of the packages):
+```bash
+dietnet predict --model ./my_packages \
+                --plink-prefix /path/to/test_data \
+                --output predictions.tsv
+
+# Use a subset of seeds/folds from your ensemble
+dietnet predict --model ./my_packages \
+                --plink-prefix /path/to/test_data \
+                --output predictions.tsv \
+                --seeds 42 43 --folds 0 1
+```
+
+## Training from Scratch (legacy HDF5 path)
 
 ### Complete workflow
 
@@ -138,70 +211,3 @@ dietnet --help
 dietnet train --help
 dietnet predict --help
 ```
-
-## Training pipeline
-
-![code_wf](Images/dn_workflow.png)
-## Scripts
-### Main scripts
-1. **create_dataset.py** : Create dataset and partition data into folds. The script takes snps.txt and labels.txt files as input to create dataset.npz and folds_indexes.npz
-1. **generate_embedding.py** : Takes dataset.npz and folds_indexes.npz files created in the previous step and computes the embedding (genotypic frequency) of every fold. Embedding of each fold is saved in embedding.npz
-    1. Missing values are -1 and are not included in the computation of genotypic frequencies embedding
-    1. Embedding values are computed on train and valid sets
-1. **train.py** : Whole training process. The data is divided in train/valid and test sets. Performance is reported on the test set.
-    1. Data preprocessing of auxiliary net : Square Euclidean distance normalization
-    1. Data preprocessing of discrim net: Missing values are replaced by the mean of the feature computed on training set. Data normalization (standardization) using mean and sd computed on training set.
-1. **test_external_dataset.py** : Test model on an external set, ie on individuals that are not part of dataset.npz
-1. **evaluate.py** : Utilities to visualize the model performance such as confusion matrix
-  
-### Helper scripts
-- **dataset_utils.py** : Data related functions (shuffle, partition, split, get_fold_data, replace_missing_values, normalize, ...)
-- **model.py** : Model definition of feature embedding (auxiliary) and discriminative (main) networks.
-- **mainloop_utils.py** : Function used in the training loop (get_predictions, compute_accuracy, eval_step, ...)
-- **log_utils.py** : Utilities to save data (model summary and parameters, experiment parameters, predictions, etc.)
-- **test_utils.py** : Utilities related to testing a trained model on an external set
-
-## Files
-### Raw files provided by user
-- **snps.txt** : File of genotypes in additive encoding format and tab-separated.
-- **labels.txt** : File of samples and their label.
-### Files created before training
-- **dataset.npz** : Dataset created from the parsed snps.txt and labels.txt files.
-- **folds_indexes.npz** : Array index (arrays are in dataset.npz) for each fold. The indexes are those of the data points to use as test.
-- **embedding.npz** : Computed embeddings of each fold.
-### Files returned after training
-- **exp_params.log** : Experiment parameters (fixed seed, learning rate, number of epochs, etc.)
-- **model_summary.log** : Model information (number of hidden layers, number of neurons in each layers, activation functions, etc.)
-- **model_params.pt** : Model parameters of final trained model
-- **model_predictions.npz**: Scores and predictions returned by the trained model for test samples
-- **additional_data.npz** : Some more information used at training time (mus and sigmas values used for normalization, feature names, label names, training samples ids, validation samples ids, etc.) 
-
-## To do
-- [x] Embedding
-- [x] Data preprocessing : Missing values
-- [x] Data preprocessing : Data normalization
-- [x] Dataset class (for dataloader)
-- [x] Auxiliary and Main networks models
-- [x] Training loop
-- [x] Loss/Accuracy monitoring of train and valid
-- [x] Early stopping
-- [x] Test for in-sample data
-- [ ] Test in-sample with missing values rates
-- [x] Test for out-of-sample data
-- [x] Save model params, results
-
-## Requirements
-- Python >= 3.10
-- PyTorch >= 2.0.0
-- NumPy >= 1.24.0
-- pandas >= 2.0.0
-- h5py >= 3.8.0
-- PyYAML >= 6.0
-- click >= 8.1.0
-- pyplink >= 1.3.0
-- scikit-learn >= 1.3.0
-
-### Optional
-- captum >= 0.6.0 (for interpretability)
-- matplotlib >= 3.7.0 (for visualization)
-- comet-ml >= 3.33.0 (for experiment tracking)

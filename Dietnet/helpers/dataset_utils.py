@@ -212,20 +212,23 @@ def shuffle(indices, seed=None):
     np.random.shuffle(indices)
 
 
-def partition(indices, nb_folds, train_valid_ratio, seed=None):
+def partition(indices, nb_folds, train_valid_ratio, seed=None, labels=None):
     """
-    The partitions contains indices of train. valid and test sets
-    for each fold.
-    If folds test sets with equal nb of samples is not possible:
-    test set of last fold will have more samples
-    The number of extra samples will always be < nb_folds
+    Partition indices into train/valid/test for each fold.
+
+    If labels are provided, performs stratified splitting to preserve label
+    proportions per fold.
     """
-    # Shuffle data
+    if labels is not None:
+        return _partition_stratified(indices, labels, nb_folds, train_valid_ratio, seed)
+    return _partition_unstratified(indices, nb_folds, train_valid_ratio, seed)
+
+
+def _partition_unstratified(indices, nb_folds, train_valid_ratio, seed=None):
     if seed is not None:
         np.random.seed(seed)
     shuffle(indices, seed=seed)
 
-    # Get indices of examples in test set for each fold
     step = math.floor(len(indices)/nb_folds)
     split_pos = [i for i in range(0, len(indices), step)]
 
@@ -237,28 +240,63 @@ def partition(indices, nb_folds, train_valid_ratio, seed=None):
 
     test_indices_byfold.append(indices[start:]) # append last fold
 
-    # Get indices of train+valid sets for each fold
     train_indices_byfold = []
     valid_indices_byfold = []
     for i in range(nb_folds):
         other_folds = [f for f in range(nb_folds) if f!=i]
-        # Concat test indices of other folds: this is train+valid indices
         train_valid_indices = np.concatenate(
                 [test_indices_byfold[f] for f in other_folds]
                 )
-        # Split into train and valid sets
         train_indices, valid_indices = split(train_valid_indices,
                 train_valid_ratio, seed)
         train_indices_byfold.append(train_indices)
         valid_indices_byfold.append(valid_indices)
 
-    # Train, valid and test indices of examples for each fold
     indices_byfold = []
     for train_indices, valid_indices, test_indices in zip(
             train_indices_byfold, valid_indices_byfold, test_indices_byfold):
         indices_byfold.append([train_indices, valid_indices, test_indices])
 
     return indices_byfold
+
+
+def _partition_stratified(indices, labels, nb_folds, train_valid_ratio, seed=None):
+    rng = np.random.default_rng(seed)
+    indices = np.asarray(indices)
+    labels = np.asarray(labels)
+
+    unique_labels = np.unique(labels)
+    per_label_splits = {}
+    for lab in unique_labels:
+        lab_indices = indices[labels == lab]
+        lab_indices = lab_indices.copy()
+        rng.shuffle(lab_indices)
+        per_label_splits[lab] = np.array_split(lab_indices, nb_folds)
+
+    folds = []
+    for fold in range(nb_folds):
+        train_parts = []
+        valid_parts = []
+        test_parts = []
+
+        for lab in unique_labels:
+            splits = per_label_splits[lab]
+            test_part = splits[fold]
+            remainder = np.concatenate([splits[i] for i in range(nb_folds) if i != fold])
+            rng.shuffle(remainder)
+
+            n_train = int(math.floor(train_valid_ratio * len(remainder)))
+            train_parts.append(remainder[:n_train])
+            valid_parts.append(remainder[n_train:])
+            test_parts.append(test_part)
+
+        train_indices = np.concatenate(train_parts) if train_parts else np.array([], dtype=int)
+        valid_indices = np.concatenate(valid_parts) if valid_parts else np.array([], dtype=int)
+        test_indices = np.concatenate(test_parts) if test_parts else np.array([], dtype=int)
+
+        folds.append([train_indices, valid_indices, test_indices])
+
+    return folds
 
 
 def split(indices, split_ratio, seed):

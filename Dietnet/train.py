@@ -55,6 +55,8 @@ def main_with_args(args):
     # Hyperparameters
     f = open(os.path.join(args.exp_path, args.exp_name, args.config), 'r')
     config_hyperparams = yaml.load(f, Loader=yaml.FullLoader)
+    if getattr(args, "seed_override", None) is not None:
+        config_hyperparams['seed'] = args.seed_override
 
     config['params'] = config_hyperparams
 

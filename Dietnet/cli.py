@@ -41,41 +41,32 @@ def main():
     default='config.yaml',
     help='YAML config file with hyperparameters (default: config.yaml).'
 )
+# NEW PLINK PACKAGE APPROACH (Recommended)
 @click.option(
-    '--dataset',
-    type=str,
-    default='dataset.hdf5',
-    help='HDF5 dataset file (default: dataset.hdf5).'
-)
-@click.option(
-    '--partition',
-    type=str,
-    default='partitioned_idx.npz',
-    help='Partition indexes file (default: partitioned_idx.npz).'
-)
-@click.option(
-    '--embedding',
-    type=str,
-    default='embedding.npz',
-    help='Genotype frequency embedding file (default: embedding.npz).'
-)
-@click.option(
-    '--input-features-means',
-    type=str,
-    default='input_features_means.npz',
-    help='Input feature means for missing value imputation (default: input_features_means.npz).'
-)
-@click.option(
-    '--label-file',
+    '--plink-prefix',
     type=str,
     default=None,
-    help='Label file (TSV format, required for PLINK datasets).'
+    help='PLINK file prefix for training data (without .bed/.bim/.fam).'
 )
 @click.option(
-    '--which-fold',
+    '--output-dir',
+    type=click.Path(),
+    default=None,
+    help='Directory to save trained model package(s). Defaults to <exp-path>/<exp-name>_packages.'
+)
+@click.option(
+    '--seeds',
     type=int,
-    required=True,
-    help='Which fold to train on (0-indexed).'
+    multiple=True,
+    default=None,
+    help='Seeds to train (default: seed from config).'
+)
+@click.option(
+    '--folds',
+    type=int,
+    multiple=True,
+    default=None,
+    help='Folds to train (default: all folds from partition).'
 )
 @click.option(
     '--task',
@@ -110,15 +101,105 @@ def main():
     default=False,
     help='Run in hyperparameter optimization mode (default: disabled).'
 )
-def train(exp_path, exp_name, config, dataset, partition, embedding,
-          input_features_means, label_file, which_fold, task, normalize, param_init,
-          comet_ml, comet_ml_project_name, optimization):
+@click.option(
+    '--dataset',
+    type=str,
+    default='dataset.hdf5',
+    help='[DEPRECATED] HDF5 dataset file (default: dataset.hdf5).'
+)
+@click.option(
+    '--partition',
+    type=str,
+    default='partitioned_idx.npz',
+    help='Partition indexes file (default: partitioned_idx.npz).'
+)
+@click.option(
+    '--embedding',
+    type=str,
+    default='embedding.npz',
+    help='Genotype frequency embedding file (default: embedding.npz).'
+)
+@click.option(
+    '--input-features-means',
+    type=str,
+    default='input_features_means.npz',
+    help='Input feature means for missing value imputation (default: input_features_means.npz).'
+)
+@click.option(
+    '--label-file',
+    type=str,
+    default=None,
+    help='Label file (TSV format, required for PLINK datasets).'
+)
+@click.option(
+    '--which-fold',
+    type=int,
+    default=None,
+    help='[DEPRECATED] Which fold to train on (0-indexed).'
+)
+def train(exp_path, exp_name, config, plink_prefix, output_dir, seeds, folds,
+          task, normalize, param_init, comet_ml, comet_ml_project_name,
+          optimization, dataset, partition, embedding, input_features_means,
+          label_file, which_fold):
     """
-    Train a DietNetwork model on a specific fold.
+    Train DietNetwork models and save them as model packages.
 
-    Example:
-        dietnet train --exp-path ./data --exp-name experiment1 --which-fold 0
+    Recommended: use --plink-prefix to train directly from PLINK files and
+    produce cache-style packages (seed_X/fold_Y). The legacy HDF5 path is still
+    available but deprecated.
     """
+    import warnings
+
+    # Detect which training path to use
+    dataset_is_plink = dataset is not None and dataset.endswith(('.bed', '.bim', '.fam'))
+    using_plink = plink_prefix is not None or dataset_is_plink
+
+    if plink_prefix and dataset_is_plink:
+        click.echo("Note: --plink-prefix provided; ignoring PLINK-style --dataset.", err=True)
+
+    if using_plink:
+        _train_with_plink_packages(
+            exp_path=exp_path,
+            exp_name=exp_name,
+            config=config,
+            plink_prefix=plink_prefix or dataset,
+            output_dir=output_dir,
+            seeds=seeds,
+            folds=folds,
+            task=task,
+            normalize=normalize,
+            param_init=param_init,
+            comet_ml=comet_ml,
+            comet_ml_project_name=comet_ml_project_name,
+            optimization=optimization,
+            partition=partition,
+            embedding=embedding,
+            input_features_means=input_features_means,
+            label_file=label_file
+        )
+        return
+
+    # ====================
+    # LEGACY HDF5 APPROACH (DEPRECATED)
+    # ====================
+    warnings.warn(
+        "\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "DEPRECATION WARNING: HDF5-based training is deprecated!\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "\n"
+        "Please migrate to the PLINK-based training path (--plink-prefix)\n"
+        "which automatically packages models for inference.\n"
+        "\n"
+        "═══════════════════════════════════════════════════════════════\n",
+        DeprecationWarning,
+        stacklevel=2
+    )
+
+    if which_fold is None:
+        click.echo("ERROR: --which-fold is required for legacy HDF5 training.", err=True)
+        sys.exit(1)
+
     from Dietnet import train as train_module
 
     # Build arguments object to pass to original train script
@@ -144,6 +225,242 @@ def train(exp_path, exp_name, config, dataset, partition, embedding,
 
     # Call the original train logic
     train_module.main_with_args(args)
+
+
+def _train_with_plink_packages(exp_path, exp_name, config, plink_prefix,
+                               output_dir, seeds, folds, task, normalize,
+                               param_init, comet_ml, comet_ml_project_name,
+                               optimization, partition, embedding,
+                               input_features_means, label_file):
+    """
+    Train one or more models from PLINK data and package them for inference.
+    """
+    import copy
+    import numpy as np
+    import torch
+    import yaml
+
+    from Dietnet import train as train_module
+    from Dietnet.helpers import dataset_utils as du
+    from Dietnet.helpers.model_package import ModelPackage
+    from Dietnet.helpers.snp_alignment import parse_bim_file
+
+    exp_path = Path(exp_path)
+    package_root = Path(output_dir) if output_dir else exp_path / f"{exp_name}_packages"
+
+    if label_file is None:
+        click.echo("ERROR: --label-file is required for PLINK training.", err=True)
+        sys.exit(1)
+
+    # Resolve PLINK paths
+    plink_prefix_path = _normalize_plink_prefix(plink_prefix)
+    dataset_arg = str(plink_prefix_path.with_suffix('.bed'))
+    dataset_file = _resolve_path(exp_path, dataset_arg)
+    bim_file = dataset_file.with_suffix('.bim')
+
+    if not dataset_file.exists():
+        click.echo(f"ERROR: Training PLINK file not found: {dataset_file}", err=True)
+        sys.exit(1)
+
+    if not bim_file.exists():
+        click.echo(f"ERROR: BIM file not found for training data: {bim_file}", err=True)
+        sys.exit(1)
+
+    # Load config for default seed
+    config_path = exp_path / exp_name / config
+    if not config_path.exists():
+        click.echo(f"ERROR: Config file not found: {config_path}", err=True)
+        sys.exit(1)
+
+    with open(config_path, 'r') as f:
+        base_config = yaml.safe_load(f) or {}
+
+    default_seed = base_config.get('seed')
+    seed_list = list(seeds) if seeds else ([default_seed] if default_seed is not None else [])
+    if not seed_list:
+        click.echo("ERROR: No seed provided and config file has no 'seed' value.", err=True)
+        sys.exit(1)
+
+    # Load folds to determine available folds
+    partition_path = _resolve_path(exp_path, partition)
+    if not partition_path.exists():
+        click.echo(f"ERROR: Partition file not found: {partition_path}", err=True)
+        sys.exit(1)
+
+    folds_data = np.load(partition_path, allow_pickle=True)
+    folds_indexes = folds_data['folds_indexes']
+    available_folds = list(range(len(folds_indexes)))
+    fold_list = list(folds) if folds else available_folds
+
+    invalid_folds = [f for f in fold_list if f not in available_folds]
+    if invalid_folds:
+        click.echo(f"ERROR: Requested folds {invalid_folds} not in available folds {available_folds}.", err=True)
+        sys.exit(1)
+
+    # Label mapping (classification only)
+    label_path = _resolve_path(exp_path, label_file)
+    if not label_path.exists():
+        click.echo(f"ERROR: Label file not found: {label_path}", err=True)
+        sys.exit(1)
+
+    label_mapping = _load_label_mapping(label_path, task, du)
+
+    # SNP list from training BIM
+    snp_df = parse_bim_file(bim_file)
+    snps = snp_df['chr_pos'].tolist()
+
+    # Load embedding and input stats once
+    embedding_path = _resolve_path(exp_path, embedding)
+    stats_path = _resolve_path(exp_path, input_features_means)
+
+    if not embedding_path.exists():
+        click.echo(f"ERROR: Embedding file not found: {embedding_path}", err=True)
+        sys.exit(1)
+    if not stats_path.exists():
+        click.echo(f"ERROR: Input feature stats not found: {stats_path}", err=True)
+        sys.exit(1)
+
+    embedding_data = np.load(embedding_path, allow_pickle=True)
+    stats_data = np.load(stats_path, allow_pickle=True)
+
+    # Train models
+    for seed_value in seed_list:
+        for fold in fold_list:
+            click.echo(f"\n=== Training seed {seed_value}, fold {fold} ===", err=True)
+
+            class Args:
+                pass
+
+            args = Args()
+            args.exp_path = str(exp_path)
+            args.exp_name = exp_name
+            args.config = config
+            args.dataset = dataset_arg
+            args.partition = partition
+            args.embedding = embedding
+            args.input_features_means = input_features_means
+            args.label_file = label_file
+            args.which_fold = fold
+            args.task = task
+            args.normalize = normalize
+            args.param_init = param_init
+            args.comet_ml = comet_ml
+            args.comet_ml_project_name = comet_ml_project_name
+            args.optimization = optimization
+            args.seed_override = seed_value
+
+            # Run training for this seed/fold
+            train_module.main_with_args(args)
+
+            out_dir = exp_path / exp_name / f"{exp_name}_fold{fold}"
+            checkpoint = _find_model_checkpoint(out_dir)
+            if checkpoint is None:
+                click.echo(f"ERROR: No checkpoint found in {out_dir}; skipping packaging.", err=True)
+                continue
+
+            model_state = torch.load(checkpoint, map_location='cpu', weights_only=False)
+            embedding_for_fold = _select_embedding_for_fold(embedding_data, fold)
+            input_stats = _extract_input_stats_for_fold(stats_data, fold)
+
+            config_for_meta = copy.deepcopy(base_config)
+            config_for_meta['seed'] = seed_value
+
+            package_dir = package_root / f"seed_{seed_value}" / f"fold_{fold}"
+            ModelPackage(package_dir).save(
+                model_state=model_state,
+                snps=snps,
+                input_stats=input_stats,
+                embedding=embedding_for_fold,
+                label_mapping=label_mapping,
+                config=config_for_meta,
+                seed=seed_value,
+                fold=fold,
+                training_info={
+                    'exp_path': str(exp_path),
+                    'exp_name': exp_name,
+                    'dataset': str(dataset_file)
+                },
+                bim_file=bim_file
+            )
+
+            click.echo(f"✓ Saved model package to {package_dir}", err=True)
+
+
+def _normalize_plink_prefix(plink_prefix: str) -> Path:
+    path = Path(plink_prefix)
+    if path.suffix in {'.bed', '.bim', '.fam'}:
+        path = path.with_suffix('')
+    return path
+
+
+def _resolve_path(base: Path, target: str) -> Path:
+    target_path = Path(target)
+    if target_path.is_absolute():
+        return target_path
+    return base / target_path
+
+
+def _find_model_checkpoint(out_dir: Path):
+    if not out_dir.exists():
+        return None
+    candidates = list(out_dir.glob('*.pt'))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return candidates[0]
+
+
+def _select_embedding_for_fold(embedding_data, fold: int):
+    import numpy as np
+
+    if 'emb' in embedding_data:
+        emb_arr = embedding_data['emb']
+    elif 'embedding' in embedding_data:
+        emb_arr = embedding_data['embedding']
+    else:
+        emb_arr = embedding_data[list(embedding_data.files)[0]]
+
+    emb_arr = np.array(emb_arr)
+    if emb_arr.ndim > 1 and emb_arr.shape[0] > fold:
+        return emb_arr[fold]
+    return emb_arr
+
+
+def _extract_input_stats_for_fold(stats_data, fold: int):
+    import numpy as np
+
+    if 'means_by_fold' in stats_data:
+        fold_stats = stats_data['means_by_fold'][fold]
+        if isinstance(fold_stats, np.ndarray) and fold_stats.dtype == object:
+            fold_stats = fold_stats.tolist()
+        mean = np.array(fold_stats[0])
+        std = np.array(fold_stats[1]) if len(fold_stats) > 1 else None
+    else:
+        mean = stats_data['mean']
+        std = stats_data['std'] if 'std' in stats_data else None
+        mean = np.array(mean)
+        if mean.ndim > 1 and mean.shape[0] > fold:
+            mean = mean[fold]
+        if std is not None:
+            std = np.array(std)
+            if std.ndim > 1 and std.shape[0] > fold:
+                std = std[fold]
+
+    input_stats = {'mean': np.asarray(mean)}
+    if std is not None:
+        input_stats['std'] = np.asarray(std)
+    return input_stats
+
+
+def _load_label_mapping(label_file: Path, task: str, du) -> dict:
+    import numpy as np
+
+    if task == 'regression':
+        return {}
+
+    samples, labels = du.load_labels(label_file)
+    label_names = np.unique(labels)
+    return {label: idx for idx, label in enumerate(label_names)}
 
 
 @main.command()
@@ -564,6 +881,12 @@ def create_dataset(genotypes, labels, output_dir, output_name, task,
     help='Dataset filename (default: dataset.hdf5).'
 )
 @click.option(
+    '--label-file',
+    type=str,
+    default=None,
+    help='Label TSV (required for stratified PLINK partitioning).'
+)
+@click.option(
     '--output-name',
     type=str,
     default='partitioned_idx.npz',
@@ -587,7 +910,12 @@ def create_dataset(genotypes, labels, output_dir, output_name, task,
     default=42,
     help='Random seed for reproducibility (default: 42).'
 )
-def partition(exp_path, dataset, output_name, nb_folds, train_valid_ratio, seed):
+@click.option(
+    '--stratify/--no-stratify',
+    default=False,
+    help='Stratify folds by label/population (default: no).'
+)
+def partition(exp_path, dataset, output_name, nb_folds, train_valid_ratio, seed, label_file, stratify):
     """
     Partition dataset into cross-validation folds.
 
@@ -606,6 +934,8 @@ def partition(exp_path, dataset, output_name, nb_folds, train_valid_ratio, seed)
     args.nb_folds = nb_folds
     args.train_valid_ratio = train_valid_ratio
     args.seed = seed
+    args.label_file = label_file
+    args.stratify = stratify
 
     from Dietnet import partition_data as partition_module
     partition_module.partition_data_with_args(args)
