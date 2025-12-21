@@ -138,6 +138,7 @@ dietnet train \
 ```
 
 Packages land in `<exp-path>/<exp-name>_packages/seed_*/fold_*/` by default and are ready for `dietnet predict`.
+`--seeds` and `--folds` accept space-separated lists in a single flag (e.g., `--seeds 42 43 44`).
 
 ## Inference (presets or your own packages)
 
