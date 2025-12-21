@@ -7,12 +7,12 @@ training and test datasets.
 
 import argparse
 import sys
+from collections import Counter
 from pathlib import Path
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 # Add parent directory to path
@@ -73,7 +73,8 @@ def predict_single_model(
     plink_bin=None,
     temp_dir=None,
     skip_preprocess=False,
-    force_preprocess=False
+    force_preprocess=False,
+    verbose=True
 ):
     """
     Run inference with a single model using PLINK preprocessing.
@@ -92,15 +93,15 @@ def predict_single_model(
     Returns:
         Tuple of (sample_ids, predictions, probabilities)
     """
-    print(f"\n{'='*60}")
-    print(f"Running inference: seed {model_package.seed}, fold {model_package.fold}")
-    print(f"{'='*60}")
+    if verbose:
+        print(f"\nRunning inference: seed {model_package.seed}, fold {model_package.fold}")
 
     # Determine which PLINK file to use
     if skip_preprocess:
         # User provided already-preprocessed PLINK file
         preprocessed_plink_prefix = plink_prefix
-        print(f"\nUsing provided preprocessed PLINK: {preprocessed_plink_prefix}")
+        if verbose:
+            print(f"Using preprocessed PLINK: {preprocessed_plink_prefix}")
     else:
         # Need to preprocess
         # Check if model has BIM file
@@ -114,7 +115,8 @@ def predict_single_model(
         # Find PLINK binary
         if plink_bin is None:
             plink_bin = find_plink_binary()
-        print(f"Using PLINK: {plink_bin}")
+        if verbose:
+            print(f"Using PLINK: {plink_bin}")
 
         # Preprocess test data with PLINK
         if temp_dir is None:
@@ -134,7 +136,8 @@ def predict_single_model(
         )
 
     # Load model
-    print("\nLoading model...")
+    if verbose:
+        print("Loading model...")
     model = load_model_from_package(model_package, device=device)
 
     # Load and normalize embedding
@@ -145,11 +148,13 @@ def predict_single_model(
         embedding = torch.unsqueeze(embedding, dim=1)
 
     # Create dataset (loads preprocessed PLINK with memory mapping)
-    print("\nCreating inference dataset...")
+    if verbose:
+        print("\nCreating inference dataset...")
     dataset = InferenceDataset(
         plink_prefix=preprocessed_plink_prefix,
         model_package=model_package,
-        use_memmap=True
+        use_memmap=True,
+        verbose=verbose
     )
 
     # Create data loader
@@ -162,12 +167,24 @@ def predict_single_model(
     )
 
     # Run inference
-    print(f"\nRunning inference on {len(dataset)} samples...")
+    if verbose:
+        print(f"\nRunning inference on {len(dataset)} samples...")
+    import warnings
+    warnings.filterwarnings(
+        "ignore",
+        message="This DataLoader will create .* worker processes",
+        category=UserWarning
+    )
     all_sample_ids = []
     all_logits = []
 
     with torch.no_grad():
-        for batch_geno, batch_sample_ids in tqdm(loader, desc="Inference"):
+        for batch_geno, batch_sample_ids in tqdm(
+            loader,
+            desc="Inference",
+            disable=not verbose,
+            leave=False
+        ):
             batch_geno = batch_geno.to(device)
             logits = model(embedding, batch_geno)
             all_logits.append(logits.cpu())
@@ -178,7 +195,8 @@ def predict_single_model(
     probabilities = F.softmax(all_logits, dim=1).numpy()
     predictions = torch.argmax(all_logits, dim=1).numpy()
 
-    print("✓ Inference complete")
+    if verbose:
+        print("✓ Inference complete")
 
     return all_sample_ids, predictions, probabilities
 
@@ -211,15 +229,14 @@ def predict_ensemble(
         label_mapping: Label mapping dict
 
     Returns:
-        Tuple of (sample_ids, ensemble_predictions, ensemble_probabilities, agreement_stats)
+        Tuple of (sample_ids, ensemble_predictions, ensemble_probabilities,
+                  agreement_stats, individual_predictions)
     """
     all_predictions = []
     all_probabilities = []
     sample_ids = None
 
     # Determine preprocessing strategy
-    from pathlib import Path
-
     if skip_preprocess:
         # Already preprocessed - all models use the same plink_prefix
         preprocessed_plink = plink_prefix
@@ -232,8 +249,9 @@ def predict_ensemble(
         preprocessed_plink = str(temp_dir / 'test_preprocessed')
 
     # Run inference with each model
-    for i, pkg in enumerate(model_packages, 1):
-        print(f"\n[{i}/{len(model_packages)}] Processing seed {pkg.seed}, fold {pkg.fold}...")
+    model_bar = tqdm(model_packages, desc="Models", unit="model")
+    for i, pkg in enumerate(model_bar, 1):
+        model_bar.set_postfix_str(f"seed {pkg.seed} fold {pkg.fold}")
 
         # First model: preprocess if needed
         # Subsequent models: always reuse preprocessed file
@@ -259,7 +277,8 @@ def predict_ensemble(
             plink_bin=plink_bin,
             temp_dir=current_temp_dir,
             skip_preprocess=skip_prep,
-            force_preprocess=force_prep
+            force_preprocess=force_prep,
+            verbose=(i == 1)
         )
 
         if sample_ids is None:
@@ -311,7 +330,7 @@ def predict_ensemble(
     print(f"  Mean agreement: {agreement_stats['mean_agreement']:.2%}")
     print(f"  Agreement range: {agreement_stats['min_agreement']:.2%} - {agreement_stats['max_agreement']:.2%}")
 
-    return sample_ids, ensemble_predictions, ensemble_probabilities, agreement_stats
+    return sample_ids, ensemble_predictions, ensemble_probabilities, agreement_stats, all_predictions
 
 
 def save_predictions(
@@ -320,30 +339,40 @@ def save_predictions(
     predictions,
     probabilities,
     label_mapping,
-    agreement_stats=None
+    agreement_stats=None,
+    individual_predictions=None
 ):
-    """Save predictions to TSV file."""
+    """
+    Save predictions in a compact, human-readable format.
+
+    For single-model predictions:
+        <sample_id> <prediction>
+
+    For ensemble predictions:
+        <sample_id> <labelA>(count) <labelB>(count) ...
+    """
     idx_to_label = {idx: label for label, idx in label_mapping.items()}
+    sample_strs = [str(sid) for sid in sample_ids]
+    id_width = max(len(sid) for sid in sample_strs)
+    lines = []
 
-    df = pd.DataFrame({
-        'sample_id': sample_ids,
-        'predicted_class': [idx_to_label[idx] for idx in predictions],
-        'predicted_idx': predictions,
-        'max_probability': np.max(probabilities, axis=1)
-    })
+    if individual_predictions is not None and len(np.atleast_2d(individual_predictions)) > 0:
+        votes = np.atleast_2d(individual_predictions)
+        for i, sid in enumerate(sample_strs):
+            counts = Counter(votes[:, i])
+            ordered = sorted(counts.items(), key=lambda item: (-item[1], idx_to_label[item[0]]))
+            label_tokens = [f"{idx_to_label[idx]}({count})" for idx, count in ordered]
+            lines.append(f"{sid.rjust(id_width)} " + " ".join(label_tokens))
+    else:
+        for sid, pred in zip(sample_strs, predictions):
+            lines.append(f"{sid.rjust(id_width)} {idx_to_label[pred]}")
 
-    # Add agreement fraction if available (ensemble mode)
-    if agreement_stats is not None:
-        df['model_agreement'] = agreement_stats['agreement_fractions']
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines) + "\n")
 
-    # Add class probabilities
-    for label, idx in sorted(label_mapping.items(), key=lambda x: x[1]):
-        df[f'prob_{label}'] = probabilities[:, idx]
-
-    df.to_csv(output_file, sep='\t', index=False)
-    print(f"\n✓ Saved predictions to {output_file}")
-    print(f"  {len(df)} samples, {len(label_mapping)} classes")
-
+    print(f"✓ Saved predictions to {output_path}")
+    print(f"  {len(sample_ids)} samples, {len(label_mapping)} classes")
     if agreement_stats is not None:
         print(f"  Ensemble of {agreement_stats['n_models']} models")
         print(f"  Seeds: {agreement_stats['seeds']}")
@@ -373,7 +402,7 @@ def main():
         '--output',
         type=str,
         required=True,
-        help='Output file for predictions (.tsv)'
+        help='Output file for predictions (text)'
     )
 
     parser.add_argument(
@@ -458,6 +487,7 @@ def main():
 
     # Get label mapping
     label_mapping = model_packages[0].label_mapping
+    individual_preds = None
 
     # Run inference with all models (ensemble)
     if len(model_packages) == 1:
@@ -476,7 +506,7 @@ def main():
         agreement_stats = None
     else:
         print(f"\nRunning ensemble inference with {len(model_packages)} models...")
-        sample_ids, predictions, probabilities, agreement_stats = predict_ensemble(
+        sample_ids, predictions, probabilities, agreement_stats, individual_preds = predict_ensemble(
             model_packages=model_packages,
             plink_prefix=args.plink_prefix,
             device=args.device,
@@ -496,7 +526,8 @@ def main():
         predictions=predictions,
         probabilities=probabilities,
         label_mapping=label_mapping,
-        agreement_stats=agreement_stats
+        agreement_stats=agreement_stats,
+        individual_predictions=individual_preds if len(model_packages) > 1 else None
     )
 
     print("\n✓ Inference complete!")

@@ -7,9 +7,9 @@ Supports single model or ensemble prediction across multiple seeds/folds.
 
 import argparse
 import sys
+from collections import Counter
 from pathlib import Path
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -81,7 +81,8 @@ def predict_single_model(
     plink_prefix,
     device='cpu',
     batch_size=128,
-    num_workers=0
+    num_workers=0,
+    verbose=True
 ):
     """
     Run inference with a single model.
@@ -96,12 +97,12 @@ def predict_single_model(
     Returns:
         Tuple of (sample_ids, predictions, probabilities)
     """
-    print(f"\n{'='*60}")
-    print(f"Running inference with model: seed {model_package.seed}, fold {model_package.fold}")
-    print(f"{'='*60}")
+    if verbose:
+        print(f"\nRunning inference with model: seed {model_package.seed}, fold {model_package.fold}")
 
     # Load model
-    print("\nLoading model...")
+    if verbose:
+        print("\nLoading model...")
     model = load_model_from_package(model_package, device=device)
 
     # Load embedding for this model
@@ -119,7 +120,8 @@ def predict_single_model(
     dataset = InferenceDataset(
         plink_prefix=plink_prefix,
         model_package=model_package,
-        use_memmap=True
+        use_memmap=True,
+        verbose=verbose
     )
 
     # Create data loader
@@ -132,12 +134,18 @@ def predict_single_model(
     )
 
     # Run inference
-    print(f"\nRunning inference on {len(dataset)} samples...")
+    if verbose:
+        print(f"\nRunning inference on {len(dataset)} samples...")
     all_sample_ids = []
     all_logits = []
 
     with torch.no_grad():
-        for batch_geno, batch_sample_ids in tqdm(loader, desc="Inference"):
+        for batch_geno, batch_sample_ids in tqdm(
+            loader,
+            desc="Inference",
+            disable=not verbose,
+            leave=False
+        ):
             # Move to device
             batch_geno = batch_geno.to(device)
 
@@ -189,14 +197,16 @@ def ensemble_predict(
     all_probabilities = []
     sample_ids = None
 
-    for i, pkg in enumerate(model_packages):
-        print(f"\nModel {i+1}/{len(model_packages)}")
+    model_bar = tqdm(model_packages, desc="Models", unit="model")
+    for i, pkg in enumerate(model_bar):
+        model_bar.set_postfix_str(f"seed {pkg.seed} fold {pkg.fold}")
         sids, preds, probs = predict_single_model(
             model_package=pkg,
             plink_prefix=plink_prefix,
             device=device,
             batch_size=batch_size,
-            num_workers=num_workers
+            num_workers=num_workers,
+            verbose=(i == 0)
         )
 
         if sample_ids is None:
@@ -239,40 +249,37 @@ def save_predictions(
     individual_predictions=None
 ):
     """
-    Save predictions to a TSV file.
+    Save predictions in a compact, human-readable format.
 
-    Args:
-        output_file: Path to output file
-        sample_ids: List of sample IDs
-        predictions: Array of predicted class indices
-        probabilities: Array of class probabilities
-        label_mapping: Dict mapping label names to indices
-        individual_predictions: Optional array of individual model predictions
+    Single model:
+        <sample_id> <prediction>
+
+    Ensemble:
+        <sample_id> <labelA>(count) <labelB>(count) ...
     """
     # Invert label mapping
     idx_to_label = {idx: label for label, idx in label_mapping.items()}
+    sample_strs = [str(sid) for sid in sample_ids]
+    id_width = max(len(sid) for sid in sample_strs)
+    lines = []
 
-    # Create output dataframe
-    df = pd.DataFrame({
-        'sample_id': sample_ids,
-        'predicted_class': [idx_to_label[idx] for idx in predictions],
-        'predicted_idx': predictions,
-        'max_probability': np.max(probabilities, axis=1)
-    })
+    if individual_predictions is not None and len(np.atleast_2d(individual_predictions)) > 0:
+        votes = np.atleast_2d(individual_predictions)
+        for i, sid in enumerate(sample_strs):
+            counts = Counter(votes[:, i])
+            ordered = sorted(counts.items(), key=lambda item: (-item[1], idx_to_label[item[0]]))
+            label_tokens = [f"{idx_to_label[idx]}({count})" for idx, count in ordered]
+            lines.append(f"{sid.rjust(id_width)} " + " ".join(label_tokens))
+    else:
+        for sid, pred in zip(sample_strs, predictions):
+            lines.append(f"{sid.rjust(id_width)} {idx_to_label[pred]}")
 
-    # Add individual class probabilities
-    for label, idx in sorted(label_mapping.items(), key=lambda x: x[1]):
-        df[f'prob_{label}'] = probabilities[:, idx]
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines) + "\n")
 
-    # Add individual model predictions if available (ensemble)
-    if individual_predictions is not None:
-        for i in range(individual_predictions.shape[0]):
-            df[f'model_{i}_pred'] = [idx_to_label[idx] for idx in individual_predictions[i]]
-
-    # Save to file
-    df.to_csv(output_file, sep='\t', index=False)
-    print(f"\n✓ Saved predictions to {output_file}")
-    print(f"  {len(df)} samples")
+    print(f"✓ Saved predictions to {output_path}")
+    print(f"  {len(sample_ids)} samples")
     print(f"  {len(label_mapping)} classes")
 
 
@@ -299,7 +306,7 @@ def main():
         '--output',
         type=str,
         required=True,
-        help='Output file for predictions (.tsv)'
+        help='Output file for predictions (text)'
     )
 
     parser.add_argument(

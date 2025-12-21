@@ -164,7 +164,7 @@ def train(exp_path, exp_name, config, dataset, partition, embedding,
     '--output',
     type=str,
     default=None,
-    help='Output TSV file for predictions.'
+    help='Output file for predictions (text).'
 )
 # LEGACY HDF5 APPROACH (Deprecated)
 @click.option(
@@ -760,7 +760,7 @@ def preprocess_plink(model, plink_prefix, output_prefix, plink_bin, force):
     '--predictions',
     type=click.Path(exists=True),
     required=True,
-    help='TSV file with predictions (from dietnet predict).'
+    help='Prediction text file (from dietnet predict).'
 )
 @click.option(
     '--labels',
@@ -788,24 +788,47 @@ def check(predictions, labels, min_accuracy, max_accuracy):
     against expected accuracy thresholds.
 
     Example:
-        dietnet check --predictions predictions.tsv \\
+        dietnet check --predictions predictions.txt \\
                       --labels labels.tsv \\
                       --min-accuracy 0.85
     """
     import pandas as pd
-    import numpy as np
+    from pathlib import Path
 
-    # Load data
-    pred_df = pd.read_csv(predictions, sep='\t')
+    # Parse compact prediction format: "<sample_id> <label>" or "<sample_id> <labelA>(count) ..."
+    lines = []
+    for raw in Path(predictions).read_text().splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        sample_id = parts[0]
+        label_token = parts[1]
+        label = label_token.split('(')[0].rstrip('.,;')
+        lines.append((sample_id, label))
+
+    if not lines:
+        click.echo(
+            "ERROR: Could not parse predictions file. Expected lines like '<sample_id> CEUGBR(15)'.",
+            err=True
+        )
+        sys.exit(1)
+
+    pred_df = pd.DataFrame(lines, columns=['sample_id', 'predicted_class'])
+    pred_df['sample_id'] = pred_df['sample_id'].astype(str)
+    pred_df['predicted_class'] = pred_df['predicted_class'].astype(str)
+
+    # Load labels and align types
     labels_df = pd.read_csv(labels, sep='\t')
-
-    # Detect column names (handle both 'sample_id' and 'Sample')
-    pred_id_col = 'sample_id' if 'sample_id' in pred_df.columns else pred_df.columns[0]
     label_id_col = labels_df.columns[0]  # First column is always sample ID
     label_class_col = labels_df.columns[1]  # Second column is always the label
+    labels_df[label_id_col] = labels_df[label_id_col].astype(str)
+    labels_df[label_class_col] = labels_df[label_class_col].astype(str)
 
     # Merge on sample IDs
-    merged = pred_df.merge(labels_df, left_on=pred_id_col, right_on=label_id_col)
+    merged = pred_df.merge(labels_df, left_on='sample_id', right_on=label_id_col)
 
     if len(merged) == 0:
         click.echo("ERROR: No matching samples found between predictions and labels", err=True)
