@@ -217,29 +217,38 @@ def predict_ensemble(
     all_probabilities = []
     sample_ids = None
 
-    # Preprocess once, reuse for all models
+    # Determine preprocessing strategy
     from pathlib import Path
-    if temp_dir is None:
-        temp_dir = Path('.') / 'preprocessed_plink'
+
+    if skip_preprocess:
+        # Already preprocessed - all models use the same plink_prefix
+        preprocessed_plink = plink_prefix
     else:
-        temp_dir = Path(temp_dir)
-    preprocessed_prefix = temp_dir / 'test_preprocessed'
+        # Need to preprocess - compute output path
+        if temp_dir is None:
+            temp_dir = Path('.') / 'preprocessed_plink'
+        else:
+            temp_dir = Path(temp_dir)
+        preprocessed_plink = str(temp_dir / 'test_preprocessed')
 
     # Run inference with each model
     for i, pkg in enumerate(model_packages, 1):
         print(f"\n[{i}/{len(model_packages)}] Processing seed {pkg.seed}, fold {pkg.fold}...")
 
-        # First model: preprocess and save to common file
-        # Subsequent models: reuse preprocessed file
-        if i == 1:
+        # First model: preprocess if needed
+        # Subsequent models: always reuse preprocessed file
+        if i == 1 and not skip_preprocess:
+            # First model does preprocessing
             current_plink = plink_prefix
-            skip_prep = skip_preprocess
+            skip_prep = False
             force_prep = force_preprocess
+            current_temp_dir = temp_dir
         else:
-            # Reuse preprocessed file from first model
-            current_plink = str(preprocessed_prefix)
+            # Use already-preprocessed file
+            current_plink = preprocessed_plink
             skip_prep = True
             force_prep = False
+            current_temp_dir = temp_dir if not skip_preprocess else None
 
         ids, preds, probs = predict_single_model(
             model_package=pkg,
@@ -248,7 +257,7 @@ def predict_ensemble(
             batch_size=batch_size,
             num_workers=num_workers,
             plink_bin=plink_bin,
-            temp_dir=temp_dir,
+            temp_dir=current_temp_dir,
             skip_preprocess=skip_prep,
             force_preprocess=force_prep
         )
