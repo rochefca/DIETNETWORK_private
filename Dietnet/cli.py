@@ -255,6 +255,18 @@ def train(exp_path, exp_name, config, dataset, partition, embedding,
     help='DataLoader workers (default: 0).'
 )
 @click.option(
+    '--save-logits',
+    type=str,
+    default=None,
+    help='Optional path to save raw logits/probabilities (.npz).'
+)
+@click.option(
+    '--save-hidden',
+    type=str,
+    default=None,
+    help='Optional path to save final hidden representations (.npz).'
+)
+@click.option(
     '--force-download',
     is_flag=True,
     help='Force re-download of model preset (only for --model presets).'
@@ -278,7 +290,7 @@ def train(exp_path, exp_name, config, dataset, partition, embedding,
 def predict(model, plink_prefix, output, test_dataset, train_dataset, config,
             embedding, input_features_stats, model_params, output_dir, output_name,
             which_fold, seeds, folds, batch_size, device, num_workers, force_download,
-            skip_preprocess, task, normalize):
+            skip_preprocess, task, normalize, save_logits, save_hidden):
     """
     Run inference on a test dataset using a trained model.
 
@@ -370,6 +382,10 @@ def predict(model, plink_prefix, output, test_dataset, train_dataset, config,
             cmd.extend(['--folds'] + [str(f) for f in folds])
         if skip_preprocess:
             cmd.append('--skip-preprocess')
+        if save_logits:
+            cmd.extend(['--save-logits', save_logits])
+        if save_hidden:
+            cmd.extend(['--save-hidden', save_hidden])
 
         # Run inference
         result = subprocess.run(cmd)
@@ -870,6 +886,65 @@ def check(predictions, labels, min_accuracy, max_accuracy):
             sys.exit(1)
 
     click.echo("✓ PASSED")
+
+
+@main.command()
+@click.option(
+    '--predictions',
+    type=click.Path(exists=True),
+    required=True,
+    help='Prediction text file (compact format from dietnet predict).'
+)
+@click.option(
+    '--labels',
+    type=click.Path(exists=True),
+    required=True,
+    help='TSV file with true labels (sample_id<tab>label).'
+)
+@click.option(
+    '--population',
+    type=str,
+    required=True,
+    help='Target population label to analyze (must exist in labels file).'
+)
+@click.option(
+    '--cmap',
+    type=click.Path(exists=True),
+    required=True,
+    help='JSON file mapping population labels to hex colors.'
+)
+@click.option(
+    '--output',
+    type=click.Path(),
+    required=True,
+    help='Path to save stacked bar plot (e.g., figures/mxl_stack.png).'
+)
+@click.option(
+    '--title',
+    type=str,
+    default=None,
+    help='Plot title (default: auto-generated).'
+)
+def analyze_population(predictions, labels, population, cmap, output, title):
+    """
+    Generate a per-sample stacked bar plot of ensemble votes for a target population.
+
+    Uses the compact text predictions (with vote counts) and true labels TSV.
+    """
+    from Dietnet.analysis.prediction_plots import plot_population_stack
+    try:
+        plot_population_stack(
+            predictions_path=predictions,
+            labels_path=labels,
+            target_population=population,
+            cmap_path=cmap,
+            output_path=output,
+            title=title,
+        )
+    except Exception as exc:
+        click.echo(f"ERROR: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"✓ Saved stacked bar plot to {output}")
 
 
 @main.command()
