@@ -96,45 +96,45 @@ Train directly from PLINK files and produce packaged models (`seed_X/fold_Y` wit
 ```bash
 # 1) Partition your PLINK dataset (optionally stratify by population)
 dietnet partition \
-    --exp-path ./data \
-    --dataset train.bed \
+    --exp-path /path/to/experiment_dir \
+    --dataset /path/to/train_prefix.bed \
     --nb-folds 5 \
     --stratify \
-    --label-file labels.tsv   # required for stratified PLINK
+    --label-file /path/to/labels.tsv   # required for stratified PLINK
 
 # 2) Compute embeddings per fold
 dietnet generate-embedding \
-    --exp-path ./data \
-    --dataset train.bed \
-    --label-file labels.tsv \
+    --exp-path /path/to/experiment_dir \
+    --dataset /path/to/train_prefix.bed \
+    --label-file /path/to/labels.tsv \
     --output-name embedding.npz
 
 # 3) Compute input stats (means/stds) per fold
 python Dietnet/compute_input_features_mean.py \
-    --exp-path ./data \
-    --dataset train.bed \
+    --exp-path /path/to/experiment_dir \
+    --dataset /path/to/train_prefix.bed \
     --partition partitioned_idx.npz \
     --out input_features_means.npz
 
-# 4) Train and package a single model (default seed, all folds)
+# 4) Train and package a single model (one fold)
 dietnet train \
-    --exp-path ./data \
+    --exp-path /path/to/experiment_dir \
     --exp-name my_experiment \
     --config config.yaml \
-    --plink-prefix ./data/train \
-    --label-file labels.tsv \
+    --plink-prefix /path/to/train_prefix \
+    --label-file /path/to/labels.tsv \
     --folds 0   # pick one fold if you only want a single model
 
 # 5) Train an ensemble across seeds/folds
 dietnet train \
-    --exp-path ./data \
+    --exp-path /path/to/experiment_dir \
     --exp-name my_experiment \
     --config config.yaml \
-    --plink-prefix ./data/train \
-    --label-file labels.tsv \
+    --plink-prefix /path/to/train_prefix \
+    --label-file /path/to/labels.tsv \
     --seeds 42 43 44 \
     --folds 0 1 2 3 4 \
-    --output-dir ./my_packages   # optional override
+    --output-dir /path/to/my_packages   # optional override
 ```
 
 Packages land in `<exp-path>/<exp-name>_packages/seed_*/fold_*/` by default and are ready for `dietnet predict`.
