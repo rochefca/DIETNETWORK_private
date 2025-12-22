@@ -225,6 +225,9 @@ class CombinedModel(nn.Module):
                                       param_init, input_dropout, eps,
                                       incl_bias, incl_softmax)
         self.fatLayer_weights = None
+        # Backward-compatible attribute names expected elsewhere
+        self.feat_emb = self.aux_net
+        self.disc_net = self.main_net
 
 
     def forward(self, emb, x_batch, save_layers=False):

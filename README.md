@@ -47,27 +47,40 @@ uv pip install -e ".[tracking]"
 uv pip install -e ".[dev]"
 ```
 
-## Quick Start - Smoke Test
+## Quick Start - Smoke Tests
 
-Validate your installation with the 1000 Genomes smoke test:
+Run the bundled smoke tests to verify the stack and keep intermediates contained in their own folders:
 
-```bash
-# Run smoke test (downloads model and data automatically)
-bash tests/run_smoke_test.sh
-```
+- **Run immediately after cloning** (everything downloads on first run):  
+  ```bash
+  # Train + predict on the small bundled 1KGP subset (5 folds, single seed)
+  bash tests/kgp_precomputed/run_train_smoke.sh
 
-Expected output:
-```
-Accuracy: 94.75%
-Expected: 85-100%
-✓ PASSED
-```
+  # Or inference-only with the preset model/data (no training)
+  bash tests/kgp_precomputed/run_smoke_test.sh
+  ```
+  These commands stay within `tests/kgp_precomputed/` and manage their own cached data/model downloads.
 
-This test:
-- Downloads a pretrained 1KGP model (~57 MB)
-- Downloads 1KGP test data (~1-2 GB)
-- Runs inference and validates accuracy
-- Caches everything for future runs
+- **Train + predict on small 1KGP subset** (5-fold partition, single seed):  
+  ```bash
+  bash tests/kgp_precomputed/run_train_smoke.sh
+  ```
+  Writes outputs under `tests/kgp_precomputed/output_train` and temporary PLINK preprocessing to `tests/kgp_precomputed/output_train/preprocessed_plink`.
+
+- **Preset model inference only** (no training, uses downloaded model/data):  
+  ```bash
+  bash tests/kgp_precomputed/run_smoke_test.sh
+  ```
+  Caches preprocessing under `tests/kgp_precomputed/output/preprocessed_plink`.
+
+- **HGDP/1KGP training + held-out HGDP inference smoke** (5 folds, single/ensemble variants):  
+  ```bash
+  bash tests/hgdp_kgp_model_train/run_smoke_test_single.sh
+  bash tests/hgdp_kgp_model_train/run_smoke_test.sh
+  ```
+  Outputs live under `tests/hgdp_kgp_model_train/outputs` with preprocessing in `outputs/preprocessed_plink`.
+
+All smoke tests download required assets on first run, then reuse cached data/models.
 
 ## Using Model Presets
 
@@ -138,7 +151,7 @@ dietnet train \
 ```
 
 Packages land in `<exp-path>/<exp-name>_packages/seed_*/fold_*/` by default and are ready for `dietnet predict`.
-`--seeds` and `--folds` accept space-separated lists in a single flag (e.g., `--seeds 42 43 44`).
+`--seeds` and `--folds` are Click “multiple” options: repeat the flag (`--seeds 42 --seeds 43`) or provide comma-separated values in one flag (`--seeds 42,43`). The same applies to `--folds`.
 
 ## Inference (presets or your own packages)
 
@@ -146,15 +159,18 @@ Packages land in `<exp-path>/<exp-name>_packages/seed_*/fold_*/` by default and 
 ```bash
 dietnet predict --model 1kgp_default \
                 --plink-prefix /path/to/test_data \
-                --output predictions.tsv
+                --output predictions.tsv \
+                --temp-dir ./outputs/preprocessed_plink
 ```
+`--temp-dir` controls where intermediate PLINK preprocessing files are written (default: `./preprocessed_plink`).
 
 ### Your own packaged models
 Point `--model` to the directory that contains `seed_*` folders (the parent of the packages):
 ```bash
 dietnet predict --model ./my_packages \
                 --plink-prefix /path/to/test_data \
-                --output predictions.tsv
+                --output predictions.tsv \
+                --temp-dir ./outputs/preprocessed_plink
 
 # Use a subset of seeds/folds from your ensemble
 dietnet predict --model ./my_packages \

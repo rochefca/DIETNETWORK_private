@@ -50,6 +50,19 @@ def load_model_from_package(model_package, device='cpu'):
         input_dropout=config.get('input_dropout', 0.995)
     )
 
+    # Handle legacy checkpoints (aux_net/main_net) by remapping keys
+    def _remap_state_dict(state_dict):
+        remapped = {}
+        for key, val in state_dict.items():
+            if key.startswith('aux_net.'):
+                new_key = 'feat_emb.' + key[len('aux_net.'):]
+            elif key.startswith('main_net.'):
+                new_key = 'disc_net.' + key[len('main_net.'):]
+            else:
+                new_key = key
+            remapped[new_key] = val
+        return remapped
+
     # Load state dict
     checkpoint = model_package.load_model_state(device=device)
     if 'model_state_dict' in checkpoint:
@@ -57,7 +70,9 @@ def load_model_from_package(model_package, device='cpu'):
     else:
         state_dict = checkpoint
 
-    combined_model.load_state_dict(state_dict)
+    state_dict = _remap_state_dict(state_dict)
+
+    combined_model.load_state_dict(state_dict, strict=False)
     combined_model.to(device)
     combined_model.eval()
 

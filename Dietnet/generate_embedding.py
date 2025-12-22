@@ -142,6 +142,7 @@ def generate_embedding_with_args(args):
 
 def compute_fold_embedding(xs, ys):
     from tqdm import tqdm
+    import warnings
 
     # Total number of classes
     nb_class = ys.max() + 1 #class 0
@@ -149,13 +150,19 @@ def compute_fold_embedding(xs, ys):
     # Compute sum of genotypes (0-1-2) per class
     xs = xs.transpose() # rows are snps, col are inds
     embedding = np.zeros((xs.shape[0],nb_class*NB_POSSIBLE_GENOTYPES))
+    missing_classes = []
     for c in tqdm(range(nb_class), desc='Computing embedding', unit='class'):
         # Select genotypes for samples of same class
         class_genotypes = xs[:,ys==c]
         nb = class_genotypes.shape[1] #nb of samples in that class
+        if nb == 0:
+            missing_classes.append(c)
+            continue
         for genotype in range(NB_POSSIBLE_GENOTYPES):
             col = NB_POSSIBLE_GENOTYPES*c+genotype
             embedding[:,col] = (class_genotypes == genotype).sum(axis=1)/nb
+    if missing_classes:
+        warnings.warn(f"No samples for classes {missing_classes} in this fold; corresponding embedding columns left as 0.")
 
     return embedding
 

@@ -1,20 +1,23 @@
 #!/bin/bash
-# DietNetwork Smoke Test V2 - Uses CLI only
+# DietNetwork Single Model Test V2 - Uses CLI only
 #
-# This version uses only the dietnet CLI commands:
-#   - dietnet preprocess-plink: Align test data to model SNPs
-#   - dietnet predict: Run inference
-#   - dietnet check: Validate predictions
+# Usage: bash tests/run_smoke_test_single_v2.sh [seed] [fold]
+# Example: bash tests/run_smoke_test_single_v2.sh 78 0
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")/.."
 
 source "$SCRIPT_DIR/smoke_test_config.sh"
 
+# Get seed and fold from arguments (default to 78 and 0)
+SEED=${1:-78}
+FOLD=${2:-0}
+
 echo "=========================================="
-echo "DietNetwork Smoke Test (CLI Version)"
+echo "DietNetwork Single Model Test (CLI Version)"
+echo "Seed: $SEED, Fold: $FOLD"
 echo "=========================================="
 echo ""
 
@@ -29,14 +32,14 @@ fi
 echo "Step 1/4: Ensuring test data is available..."
 bash "$SCRIPT_DIR/download_test_data.sh"
 
-# Step 2: Preprocess PLINK data (once for all models)
+# Step 2: Preprocess PLINK data
 echo ""
 echo "Step 2/4: Preprocessing PLINK data with model alignment..."
 
 PLINK_BASE="1000G.2504_WGS30x.GSA17k_MHI.intersectGSA.miss10perc.maf0.05.pruned.autosomes.noHLA.phased_imputed_V1"
 PLINK_PREFIX="$TEST_DATA_DIR/$PLINK_BASE"
 
-OUTPUT_DIR="$SCRIPT_DIR/outputs"
+OUTPUT_DIR="$SCRIPT_DIR/output"
 PREPROCESSED_DIR="$OUTPUT_DIR/preprocessed_plink"
 PREPROCESSED_PREFIX="$PREPROCESSED_DIR/test_preprocessed"
 
@@ -47,22 +50,25 @@ dietnet preprocess-plink \
     --plink-prefix "$PLINK_PREFIX" \
     --output-prefix "$PREPROCESSED_PREFIX"
 
-# Step 3: Run inference with all models (ensemble)
+# Step 3: Run inference with single model
 echo ""
-echo "Step 3/4: Running inference with 1kgp_default preset (ensemble)..."
+echo "Step 3/4: Running inference with seed $SEED fold $FOLD..."
 
 LABELS="$TEST_DATA_DIR/labels_pop_subsampleV1.tsv"
-OUTPUT="$OUTPUT_DIR/smoke_test_predictions.tsv"
-LOGITS="$OUTPUT_DIR/smoke_test_predictions_logits.npz"
-HIDDEN="$OUTPUT_DIR/smoke_test_predictions_hidden.npz"
+OUTPUT="$OUTPUT_DIR/single_model_predictions.tsv"
+LOGITS="$OUTPUT_DIR/single_model_predictions_logits.npz"
+HIDDEN="$OUTPUT_DIR/single_model_predictions_hidden.npz"
 mkdir -p "$OUTPUT_DIR"
 
 dietnet predict \
     --model 1kgp_default \
     --plink-prefix "$PREPROCESSED_PREFIX" \
     --output "$OUTPUT" \
+    --seeds $SEED \
+    --folds $FOLD \
     --batch-size 256 \
     --device cpu \
+    --num-workers 4 \
     --skip-preprocess \
     --save-logits "$LOGITS" \
     --save-hidden "$HIDDEN"
@@ -79,5 +85,6 @@ dietnet check \
 
 echo ""
 echo "=========================================="
-echo "✓ Smoke Test Complete (CLI Version)"
+echo "✓ Single Model Test Complete (CLI Version)"
+echo "Model: seed $SEED, fold $FOLD"
 echo "=========================================="

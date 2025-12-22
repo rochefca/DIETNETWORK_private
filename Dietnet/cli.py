@@ -10,6 +10,21 @@ from pathlib import Path
 import click
 
 
+def _parse_int_multi(ctx, param, value):
+    """
+    Support repeated flags or comma-separated lists: --seeds 1 --seeds 2,3
+    """
+    if value is None:
+        return None
+    out = []
+    for item in value:
+        for part in str(item).split(','):
+            part = part.strip()
+            if part:
+                out.append(int(part))
+    return out
+
+
 @click.group()
 @click.version_option(version="0.2.0")
 def main():
@@ -56,17 +71,19 @@ def main():
 )
 @click.option(
     '--seeds',
-    type=int,
-    nargs=-1,
+    multiple=True,
+    callback=_parse_int_multi,
+    type=str,
     default=None,
-    help='Seeds to train (space-separated list; default: seed from config).'
+    help='Seeds to train (repeat flag or comma-separated; default: seed from config).'
 )
 @click.option(
     '--folds',
-    type=int,
-    nargs=-1,
+    multiple=True,
+    callback=_parse_int_multi,
+    type=str,
     default=None,
-    help='Folds to train (space-separated list; default: all folds from partition).'
+    help='Folds to train (repeat flag or comma-separated; default: all folds).'
 )
 @click.option(
     '--task',
@@ -254,7 +271,7 @@ def _train_with_plink_packages(exp_path, exp_name, config, plink_prefix,
 
     # Resolve PLINK paths
     plink_prefix_path = _normalize_plink_prefix(plink_prefix)
-    dataset_arg = str(plink_prefix_path.with_suffix('.bed'))
+    dataset_arg = f"{plink_prefix_path}.bed"
     dataset_file = _resolve_path(exp_path, dataset_arg)
     bim_file = dataset_file.with_suffix('.bim')
 
@@ -541,17 +558,19 @@ def _load_label_mapping(label_file: Path, task: str, du) -> dict:
 # COMMON OPTIONS
 @click.option(
     '--seeds',
-    type=int,
-    nargs=-1,
+    multiple=True,
+    callback=_parse_int_multi,
+    type=str,
     default=None,
-    help='Seeds to use (space-separated list; default: all in model package).'
+    help='Seeds to use (repeat flag or comma-separated; default: all in model package).'
 )
 @click.option(
     '--folds',
-    type=int,
-    nargs=-1,
+    multiple=True,
+    callback=_parse_int_multi,
+    type=str,
     default=None,
-    help='Folds to use (space-separated list; default: all in model package).'
+    help='Folds to use (repeat flag or comma-separated; default: all in model package).'
 )
 @click.option(
     '--batch-size',
@@ -589,6 +608,12 @@ def _load_label_mapping(label_file: Path, task: str, du) -> dict:
     help='Force re-download of model preset (only for --model presets).'
 )
 @click.option(
+    '--temp-dir',
+    type=str,
+    default='./preprocessed_plink',
+    help='Directory for PLINK preprocessing outputs (default: ./preprocessed_plink).'
+)
+@click.option(
     '--skip-preprocess',
     is_flag=True,
     help='Skip PLINK preprocessing (use if plink-prefix already preprocessed with preprocess-plink).'
@@ -607,7 +632,7 @@ def _load_label_mapping(label_file: Path, task: str, du) -> dict:
 def predict(model, plink_prefix, output, test_dataset, train_dataset, config,
             embedding, input_features_stats, model_params, output_dir, output_name,
             which_fold, seeds, folds, batch_size, device, num_workers, force_download,
-            skip_preprocess, task, normalize, save_logits, save_hidden):
+            temp_dir, skip_preprocess, task, normalize, save_logits, save_hidden):
     """
     Run inference on a test dataset using a trained model.
 
@@ -690,7 +715,8 @@ def predict(model, plink_prefix, output, test_dataset, train_dataset, config,
             '--output', output,
             '--batch-size', str(batch_size),
             '--device', device,
-            '--num-workers', str(num_workers)
+            '--num-workers', str(num_workers),
+            '--temp-dir', temp_dir
         ]
 
         if seeds:
