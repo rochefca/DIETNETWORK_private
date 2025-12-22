@@ -166,6 +166,12 @@ dietnet predict --help
 
 ## FAQ
 
+### How do I run this on my data?
+
+We provided 2 scripts that you can use as a template for your research:
+- `scripts/predict_external.sh` for inference on your dataset
+- `scripts/train_predict.sh` to train on a reference dataset and do inference on another
+
 ### I can't download the data or model since my compute node has no access to the internet
 
 You can run this prior to running the smoke tests:

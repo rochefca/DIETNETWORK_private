@@ -25,9 +25,9 @@ EXP_PATH="/abs/path/to/experiment_dir"
 EXP_NAME="my_experiment"
 CONFIG="/abs/path/to/config.yaml"
 
-# Ensemble seeds/folds (comma-separated for Click multiple options)
-SEEDS="42,43,44"
-FOLDS="0,1,2,3,4"
+# Optional seeds/folds filters (comma-separated). Leave empty to use all.
+SEEDS=""
+FOLDS=""
 
 # Test data for inference (PLINK prefix)
 TEST_PLINK_PREFIX="/abs/path/to/test_prefix"
