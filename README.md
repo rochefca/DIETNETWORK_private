@@ -49,36 +49,23 @@ uv pip install -e ".[dev]"
 
 ## Quick Start - Smoke Tests
 
-Run the bundled smoke tests to verify the stack and keep intermediates contained in their own folders:
+Run the bundled smoke tests to verify the code works:
 
 - **Run immediately after cloning** (everything downloads on first run):  
   ```bash
-  # Train + predict on the small bundled 1KGP subset (5 folds, single seed)
+  
+  # Downloads data and model and performs inference on data using a single model
+  bash tests/kgp_precomputed/run_smoke_test_single.sh
+
+  # Performs inference using ensemble model
+  bash tests/kgp_precomputed/run_smoke_test.sh
+
+  # Train + predict on the small bundled 1KGP subset (much slower, GPU is recommended)
   bash tests/kgp_precomputed/run_train_smoke.sh
 
-  # Or inference-only with the preset model/data (no training)
-  bash tests/kgp_precomputed/run_smoke_test.sh
   ```
   These commands stay within `tests/kgp_precomputed/` and manage their own cached data/model downloads.
 
-- **Train + predict on small 1KGP subset** (5-fold partition, single seed):  
-  ```bash
-  bash tests/kgp_precomputed/run_train_smoke.sh
-  ```
-  Writes outputs under `tests/kgp_precomputed/output_train` and temporary PLINK preprocessing to `tests/kgp_precomputed/output_train/preprocessed_plink`.
-
-- **Preset model inference only** (no training, uses downloaded model/data):  
-  ```bash
-  bash tests/kgp_precomputed/run_smoke_test.sh
-  ```
-  Caches preprocessing under `tests/kgp_precomputed/output/preprocessed_plink`.
-
-- **HGDP/1KGP training + held-out HGDP inference smoke** (5 folds, single/ensemble variants):  
-  ```bash
-  bash tests/hgdp_kgp_model_train/run_smoke_test_single.sh
-  bash tests/hgdp_kgp_model_train/run_smoke_test.sh
-  ```
-  Outputs live under `tests/hgdp_kgp_model_train/outputs` with preprocessing in `outputs/preprocessed_plink`.
 
 All smoke tests download required assets on first run, then reuse cached data/models.
 
@@ -93,7 +80,7 @@ dietnet predict --model 1kgp_default \
                 --output predictions.tsv
 
 # Using a local model package
-dietnet predict --model ./pretrained_1000g \
+dietnet predict --model /path/to/pretrained/model \
                 --plink-prefix /path/to/your/data \
                 --output predictions.tsv
 ```
@@ -181,6 +168,8 @@ dietnet predict --model ./my_packages \
 
 ## Training from Scratch (legacy HDF5 path)
 
+Note: this will become deprecated soon.
+
 ### Complete workflow
 
 ```bash
@@ -227,4 +216,18 @@ dietnet --help
 # Command-specific help
 dietnet train --help
 dietnet predict --help
+```
+
+## FAQ
+
+### I can't download the data or model since my compute node has no access to the internet
+
+You can run this prior to running the smoke tests:
+```bash
+bash tests/kgp_precomputed/download_test_data.sh
+```
+
+Likewise the models can be downloaded using the following:
+```bash
+bash tests/kgp_precomputed/download_model.sh
 ```
