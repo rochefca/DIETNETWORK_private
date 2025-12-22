@@ -132,9 +132,9 @@ Specify an existing model to use (will download automatically if not present in 
 dietnet predict --model 1kgp_default \
                 --plink-prefix /path/to/test_data \
                 --output predictions.tsv \
-                --temp-dir /path/to/preprocessed_plink
+                --temp-dir /path/to/test_data
 ```
-`--temp-dir` controls where intermediate PLINK preprocessing files are written (default: `./preprocessed_plink`).
+`--temp-dir` controls where preprocessed PLINK files **and** the genotype cache are written (default: alongside `--plink-prefix`, e.g., `/path/to/test_data`).
 
 **Available presets:**
 - `1kgp_default`: 1000 Genomes Phase 3 (24 populations, single model)
@@ -148,7 +148,7 @@ Point `--model` to the directory that contains `seed_*` folders (the parent of t
 dietnet predict --model /path/to/pretrained/model \
                 --plink-prefix /path/to/test_data \
                 --output predictions.tsv \
-                --temp-dir /path/to/preprocessed_plink
+                --temp-dir /path/to/test_data
 ```
 
 As with training, adding `--seeds` and `--folds` specifies which models to train on.

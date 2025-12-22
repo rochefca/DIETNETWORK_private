@@ -32,8 +32,12 @@ PREDICTIONS_OUT="/abs/path/to/predictions.tsv"
 SEEDS=""
 FOLDS=""
 
-# Temp directory for PLINK preprocessing (will be created if missing)
-TEMP_DIR="./preprocessed_plink"
+# Batch size for inference
+BATCH_SIZE=256
+
+# Temp directory for PLINK preprocessing and genotype cache (created if missing).
+# Defaults to the directory of TEST_PLINK_PREFIX when left empty.
+TEMP_DIR=""
 
 ############################################
 # Build model argument
@@ -50,6 +54,11 @@ if [[ -z "${MODEL_ARG}" ]]; then
   exit 1
 fi
 
+if [[ -z "${TEMP_DIR}" ]]; then
+  # Default next to the PLINK prefix
+  TEMP_DIR="$(dirname "${TEST_PLINK_PREFIX}")"
+fi
+
 mkdir -p "$(dirname "${PREDICTIONS_OUT}")" "${TEMP_DIR}"
 
 echo "[Predict] Using model: ${MODEL_ARG}"
@@ -61,6 +70,7 @@ CMD=(dietnet predict
   --plink-prefix "${TEST_PLINK_PREFIX}"
   --output "${PREDICTIONS_OUT}"
   --temp-dir "${TEMP_DIR}"
+  --batch-size "${BATCH_SIZE}"
 )
 
 if [[ -n "${SEEDS}" ]]; then

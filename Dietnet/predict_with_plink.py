@@ -6,6 +6,9 @@ training and test datasets.
 """
 
 import argparse
+import hashlib
+import json
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -22,6 +25,22 @@ from Dietnet.helpers.model_package import ModelPackage, find_model_packages
 from Dietnet.helpers.plink_utils import preprocess_test_data_with_plink, find_plink_binary
 from Dietnet.helpers.dataset_utils import InferenceDataset
 from Dietnet.helpers import model as model_module
+
+
+def _cache_base_prefix(plink_prefix: str, model_root: Path, temp_dir: Path) -> Path:
+    """
+    Build a shared prefix for preprocessed PLINK files and genotype cache.
+    The key hashes the absolute plink path and model root to avoid collisions
+    while reusing across ensemble models for the same dataset/model.
+    """
+    plink_abs = os.path.abspath(plink_prefix)
+    model_root_abs = os.path.abspath(model_root)
+    payload = json.dumps(
+        {"plink": plink_abs, "model_root": model_root_abs},
+        sort_keys=True
+    ).encode()
+    digest = hashlib.sha1(payload).hexdigest()[:8]
+    return Path(temp_dir) / f"{Path(plink_prefix).name}_{digest}"
 
 
 def load_model_from_package(model_package, device='cpu'):
@@ -89,6 +108,8 @@ def predict_single_model(
     temp_dir=None,
     skip_preprocess=False,
     force_preprocess=False,
+    cache_prefix=None,
+    force_cache_rebuild=False,
     verbose=True,
     return_logits=False,
     return_hidden=False
@@ -106,12 +127,26 @@ def predict_single_model(
         temp_dir: Directory for preprocessed files
         skip_preprocess: If True, assume plink_prefix is already preprocessed
         force_preprocess: If True, rerun preprocessing even if exists
+        cache_prefix: Base path for shared cache artifacts
+        force_cache_rebuild: If True, rebuild genotype cache even if present
 
     Returns:
         Tuple of (sample_ids, predictions, probabilities, raw_logits, hidden_reps)
     """
     if verbose:
         print(f"\nRunning inference: seed {model_package.seed}, fold {model_package.fold}")
+
+    if temp_dir is None:
+        # Default alongside the provided PLINK prefix
+        temp_dir = Path(plink_prefix).parent
+    else:
+        temp_dir = Path(temp_dir)
+
+    if cache_prefix is None:
+        cache_prefix = temp_dir / Path(plink_prefix).name
+
+    preprocess_prefix = cache_prefix.with_name(f"{cache_prefix.name}_preprocessed")
+    cache_file = cache_prefix.with_name(f"{cache_prefix.name}_genotypes.npy")
 
     # Determine which PLINK file to use
     if skip_preprocess:
@@ -136,18 +171,12 @@ def predict_single_model(
             print(f"Using PLINK: {plink_bin}")
 
         # Preprocess test data with PLINK
-        if temp_dir is None:
-            temp_dir = Path('.') / 'preprocessed_plink'
-        temp_dir = Path(temp_dir)
         temp_dir.mkdir(parents=True, exist_ok=True)
-
-        # Use fixed output name for preprocessed file (shared across all models)
-        output_prefix = temp_dir / "test_preprocessed"
 
         preprocessed_plink_prefix = preprocess_test_data_with_plink(
             test_plink_prefix=plink_prefix,
             model_bim_file=str(bim_file),
-            output_prefix=str(output_prefix),
+            output_prefix=str(preprocess_prefix),
             plink_bin=plink_bin,
             force=force_preprocess
         )
@@ -166,11 +195,13 @@ def predict_single_model(
 
     # Create dataset (loads preprocessed PLINK with memory mapping)
     if verbose:
-        print("\nCreating inference dataset...")
+        print("\nCreating inference dataset (shared cache)...")
     dataset = InferenceDataset(
         plink_prefix=preprocessed_plink_prefix,
         model_package=model_package,
         use_memmap=True,
+        cache_file=str(cache_file),
+        force_cache_rebuild=force_cache_rebuild,
         verbose=verbose
     )
 
@@ -236,6 +267,7 @@ def predict_ensemble(
     temp_dir=None,
     skip_preprocess=False,
     force_preprocess=False,
+    cache_prefix=None,
     label_mapping=None,
     save_logits=False,
     save_hidden=False
@@ -250,9 +282,10 @@ def predict_ensemble(
         batch_size: Batch size
         num_workers: Number of data loader workers
         plink_bin: Path to PLINK binary
-        temp_dir: Directory for preprocessed files
+        temp_dir: Directory for preprocessed files and genotype cache
         skip_preprocess: Skip preprocessing if True
         force_preprocess: Force re-preprocessing if True
+        cache_prefix: Shared prefix for preprocessed PLINK and genotype cache
         label_mapping: Label mapping dict
 
     Returns:
@@ -266,37 +299,35 @@ def predict_ensemble(
     all_hidden = []
     sample_ids = None
 
-    # Determine preprocessing strategy
-    if skip_preprocess:
-        # Already preprocessed - all models use the same plink_prefix
-        preprocessed_plink = plink_prefix
+    # Determine preprocessing strategy and shared prefixes
+    if temp_dir is None:
+        temp_dir = Path(plink_prefix).parent
     else:
-        # Need to preprocess - compute output path
-        if temp_dir is None:
-            temp_dir = Path('.') / 'preprocessed_plink'
-        else:
-            temp_dir = Path(temp_dir)
-        preprocessed_plink = str(temp_dir / 'test_preprocessed')
+        temp_dir = Path(temp_dir)
+
+    model_root = model_packages[0].package_root if model_packages else Path('.')
+    cache_prefix = cache_prefix or _cache_base_prefix(plink_prefix, model_root, temp_dir)
+    preprocess_prefix = cache_prefix.with_name(f"{cache_prefix.name}_preprocessed")
+    preprocessed_plink = plink_prefix if skip_preprocess else str(preprocess_prefix)
 
     # Run inference with each model
     model_bar = tqdm(model_packages, desc="Models", unit="model")
     for i, pkg in enumerate(model_bar, 1):
         model_bar.set_postfix_str(f"seed {pkg.seed} fold {pkg.fold}")
 
-        # First model: preprocess if needed
-        # Subsequent models: always reuse preprocessed file
-        if i == 1 and not skip_preprocess:
-            # First model does preprocessing
-            current_plink = plink_prefix
-            skip_prep = False
+        # First model builds preprocessing/cache unless user provided preprocessed
+        if i == 1:
+            current_plink = plink_prefix if not skip_preprocess else preprocessed_plink
+            skip_prep = skip_preprocess
             force_prep = force_preprocess
-            current_temp_dir = temp_dir
+            current_temp_dir = temp_dir if not skip_preprocess else None
+            force_cache_rebuild = force_preprocess
         else:
-            # Use already-preprocessed file
-            current_plink = preprocessed_plink
+            current_plink = preprocessed_plink if not skip_preprocess else plink_prefix
             skip_prep = True
             force_prep = False
             current_temp_dir = temp_dir if not skip_preprocess else None
+            force_cache_rebuild = False
 
         ids, preds, probs, logits, hidden = predict_single_model(
             model_package=pkg,
@@ -308,6 +339,8 @@ def predict_ensemble(
             temp_dir=current_temp_dir,
             skip_preprocess=skip_prep,
             force_preprocess=force_prep,
+            cache_prefix=cache_prefix,
+            force_cache_rebuild=force_cache_rebuild,
             verbose=(i == 1),
             return_logits=save_logits,
             return_hidden=save_hidden
@@ -500,8 +533,8 @@ def main():
     parser.add_argument(
         '--temp-dir',
         type=str,
-        default='./preprocessed_plink',
-        help='Directory for preprocessed PLINK files (default: ./preprocessed_plink)'
+        default=None,
+        help='Directory for preprocessed PLINK files and genotype cache (default: alongside --plink-prefix)'
     )
 
     parser.add_argument(
@@ -552,6 +585,11 @@ def main():
     per_model_logits = None
     per_model_hidden = None
 
+    model_root = model_packages[0].package_root
+    default_temp = Path(args.plink_prefix).parent
+    temp_dir_path = Path(args.temp_dir) if args.temp_dir else default_temp
+    cache_prefix = _cache_base_prefix(args.plink_prefix, model_root, temp_dir_path)
+
     # Run inference with all models (ensemble)
     if len(model_packages) == 1:
         print("\nRunning inference with single model...")
@@ -565,6 +603,8 @@ def main():
             temp_dir=args.temp_dir,
             skip_preprocess=args.skip_preprocess,
             force_preprocess=args.force_preprocess,
+            cache_prefix=cache_prefix,
+            force_cache_rebuild=args.force_preprocess,
             return_logits=bool(args.save_logits),
             return_hidden=bool(args.save_hidden)
         )
@@ -592,6 +632,7 @@ def main():
             temp_dir=args.temp_dir,
             skip_preprocess=args.skip_preprocess,
             force_preprocess=args.force_preprocess,
+            cache_prefix=cache_prefix,
             label_mapping=label_mapping,
             save_logits=bool(args.save_logits),
             save_hidden=bool(args.save_hidden)

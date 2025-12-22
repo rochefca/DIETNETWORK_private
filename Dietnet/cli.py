@@ -610,8 +610,8 @@ def _load_label_mapping(label_file: Path, task: str, du) -> dict:
 @click.option(
     '--temp-dir',
     type=str,
-    default='./preprocessed_plink',
-    help='Directory for PLINK preprocessing outputs (default: ./preprocessed_plink).'
+    default=None,
+    help='Directory for PLINK preprocessing outputs (default: alongside --plink-prefix).'
 )
 @click.option(
     '--skip-preprocess',
@@ -706,6 +706,9 @@ def predict(model, plink_prefix, output, test_dataset, train_dataset, config,
             import torch
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+        # Default temp dir alongside the PLINK prefix when not provided
+        effective_temp_dir = temp_dir or str(Path(plink_prefix).parent)
+
         # Build command for predict_with_plink.py
         cmd = [
             sys.executable,
@@ -716,7 +719,7 @@ def predict(model, plink_prefix, output, test_dataset, train_dataset, config,
             '--batch-size', str(batch_size),
             '--device', device,
             '--num-workers', str(num_workers),
-            '--temp-dir', temp_dir
+            '--temp-dir', effective_temp_dir
         ]
 
         if seeds:

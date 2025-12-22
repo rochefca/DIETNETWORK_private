@@ -33,8 +33,11 @@ FOLDS=""
 TEST_PLINK_PREFIX="/abs/path/to/test_prefix"
 PREDICTIONS_OUT="/abs/path/to/predictions.tsv"
 
-# Optional temp dir for PLINK preprocessing during predict
-TEMP_DIR="${EXP_PATH}/preprocessed_plink"
+# Batch size for inference
+BATCH_SIZE=256
+
+# Optional temp dir for PLINK preprocessing during predict (defaults to TEST_PLINK_PREFIX directory)
+TEMP_DIR=""
 
 ############################################
 # Derived paths (usually no edits needed)
@@ -45,7 +48,11 @@ EMBED_NAME="embedding.npz"
 INPUT_STATS_NAME="input_features_means.npz"
 PACKAGE_DIR="${EXP_PATH}/${EXP_NAME}_packages"
 
-mkdir -p "${EXP_PATH}" logs
+if [[ -z "${TEMP_DIR}" ]]; then
+  TEMP_DIR="$(dirname "${TEST_PLINK_PREFIX}")"
+fi
+
+mkdir -p "${EXP_PATH}" logs "${TEMP_DIR}"
 
 echo "[1/6] Partitioning (stratified, ${FOLDS//,/ } folds)..."
 dietnet partition \
@@ -92,6 +99,7 @@ dietnet predict \
   --output "${PREDICTIONS_OUT}" \
   --seeds "${SEEDS}" \
   --folds "${FOLDS}" \
-  --temp-dir "${TEMP_DIR}"
+  --temp-dir "${TEMP_DIR}" \
+  --batch-size "${BATCH_SIZE}"
 
 echo "[6/6] Done. Predictions saved to ${PREDICTIONS_OUT}"
