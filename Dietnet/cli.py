@@ -1035,6 +1035,79 @@ def generate_embedding(exp_path, dataset, partition, output_name, task, label_fi
     click.echo(f"✓ Embeddings generated: {exp_path}/{output_name}")
 
 
+@main.command(name='compute-input-stats')
+@click.option(
+    '--exp-path',
+    type=click.Path(exists=True),
+    required=True,
+    help='Path to directory containing dataset and partitions.'
+)
+@click.option(
+    '--dataset',
+    type=str,
+    default='dataset.hdf5',
+    help='Dataset filename (.hdf5/.h5 or PLINK .bed).'
+)
+@click.option(
+    '--partition',
+    type=str,
+    default='partitioned_idx.npz',
+    help='Partition file (default: partitioned_idx.npz).'
+)
+@click.option(
+    '--output-name',
+    type=str,
+    default='input_features_means.npz',
+    help='Output filename for feature statistics (default: input_features_means.npz).'
+)
+@click.option(
+    '--parallel-loading/--no-parallel-loading',
+    default=False,
+    help='Use parallel loading (HDF5 datasets only).'
+)
+@click.option(
+    '--ncpus',
+    type=int,
+    default=None,
+    help='Number of CPUs for parallel loading (default: all available).'
+)
+def compute_input_stats(exp_path, dataset, partition, output_name, parallel_loading, ncpus):
+    """
+    Compute per-fold input feature statistics for normalization and imputation.
+
+    Works with PLINK or HDF5 datasets and produces the stats file expected by
+    `dietnet train` (--input-features-means).
+    """
+    import sys
+    from Dietnet import compute_input_features_mean as stats_module
+
+    exp_path = Path(exp_path)
+    exp_path.mkdir(parents=True, exist_ok=True)
+    dataset_path = _resolve_path(exp_path, dataset)
+    partition_path = _resolve_path(exp_path, partition)
+
+    if not dataset_path.exists():
+        click.echo(f"ERROR: Dataset not found: {dataset_path}", err=True)
+        sys.exit(1)
+    if not partition_path.exists():
+        click.echo(f"ERROR: Partition file not found: {partition_path}", err=True)
+        sys.exit(1)
+
+    class Args:
+        pass
+
+    args = Args()
+    args.exp_path = str(exp_path)
+    args.dataset = str(dataset_path)
+    args.partition = str(partition_path)
+    args.parallel_loading = parallel_loading
+    args.ncpus = ncpus
+    args.out = output_name
+
+    stats_module.get_preprocessing_params(args)
+    click.echo(f"✓ Input feature stats saved to {exp_path}/{output_name}")
+
+
 @main.command()
 @click.option(
     '--model',
