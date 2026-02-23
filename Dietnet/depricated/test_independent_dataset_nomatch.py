@@ -52,65 +52,65 @@ def test():
     stime = time.time()
 
     # Dataset
-    du.IndepTestDataset.dataset_file = args.test_dataset
-    du.IndepTestDataset.f = h5py.File(args.test_dataset, 'r')
+    with h5py.File(args.test_dataset, 'r') as indepTestDataset_file:
+        samples = np.array(indepTestDataset_file['samples'], dtype=str)
+        nb_sample = samples.shape[0]
+        test_set = du.IndepTestDataset(list(range(nb_sample)))
+        snpnames_test = indepTestDataset_file['snp_names']
+        
+        with h5py.File(args.train_dataset, 'r') as train_file:
+            snpnames_train = train_file['snp_names']
+            nb_snp=len(snpnames_train)
+            
+            def indices_in_ref(newset, refset):
+                def snp1_before_snp2(s1, s2):
+                    chrom1, pos1, *_ = s1.split(b":")
+                    chrom2, pos2, *_ = s2.split(b":")
+                    if chrom1==chrom2:
+                        return int(pos1)<int(pos2)
+                    else:
+                        return int(chrom1[3:])<int(chrom2[3:])
+                i = j = 0
+                nnewset, nrefset = len(newset), len(refset)
+                result = [-1] * nrefset
+                while i < nnewset and j < nrefset:
+                    if newset[i] == refset[j]:
+                        result[j] = i
+                        j += 1
+                        i += 1
+                    elif snp1_before_snp2(newset[i],refset[j]):
+                        i += 1                        
+                    else:
+                        #here we assume that no position of the independant dataset is not in the DietNet dataset
+                        j += 1
 
-    print('Loading input features')
-    du.IndepTestDataset.data_x = np.array(du.IndepTestDataset.f['inputs'], dtype=np.int8)
+                return np.array(result)
+            print('Loading and matching positions')
+            pos=indices_in_ref(snpnames_test,snpnames_train)
+            valid_idx = pos[pos >= 0]
+            target_idx = np.where(pos >= 0)[0]
+
+        print('Loading input features, this part could be long')
+
+        test_set.data_x = np.full((nb_sample,nb_snp),-1, dtype=np.int8)
+        test_set.data_x[:, target_idx] = np.array(indepTestDataset_file['inputs'], dtype=np.int8)[:, valid_idx]
+        test_set.set_indexes = list(range(nb_sample))
+    print('Done')
+
+
+    scale = nb_snp/len(valid_idx)
+    print('scale:', scale)
 
     print('\nLoaded {} genotypes of {} samples'.format(
-          du.IndepTestDataset.data_x.shape[1],
-          du.IndepTestDataset.data_x.shape[0]))
+          nb_snp,
+          nb_sample))
 
     print('Loaded test data in {} seconds'.format(time.time()-stime))
 
-    # Init IndepTestDataset with set indexes being 0 to nb of samples in test set
-    test_set = du.IndepTestDataset(
-            [i for i in range(du.IndepTestDataset.data_x.shape[0])])
 
     print('---\n')
     
-    # Matching genotypes
-    if args.matched_test_dataset is None:
-        # ----------------------------------------
-        #       SCALE GENOTYPES IN TEST SET
-        # ----------------------------------------
-        # We remove SNPs that in test set but not in train set
-        # For SNPs in train set but not in test set, we put a missing value
-        # We scale non-missing genotypes in test set in proportion with the
-        # amount of SNPs in train set that are missing in test set
-        print('\n---\nMatching snps in test set according to snps in train set\n')
 
-        train_f = h5py.File(args.train_dataset, 'r')
-
-        # Adapt genotype values in test set based on snp used in train set
-        matched_genotypes, scale = tu.match_input_features(
-                du.IndepTestDataset.data_x,
-                np.array(du.IndepTestDataset.f['snp_names']),
-                np.array(train_f['snp_names']))
-    
-        print('\nFinal matched genotypes: {} samples with test genotypes matched to {} train genotypes'.format(
-                matched_genotypes.shape[0], matched_genotypes.shape[1]))
-
-        du.IndepTestDataset.data_x = matched_genotypes
-    
-        # Saving the matched dataset
-        filename = args.test_dataset.split('.hdf5')[0] + '.matched.hdf5'
-        print('Saving matched dataset to: {}'.format(filename))
-        matched_f = h5py.File(filename, 'w')
-        matched_f.create_dataset('inputs', data=matched_genotypes)
-        matched_f.create_dataset('samples', data=du.IndepTestDataset.f['samples'])
-        matched_f.create_dataset('snp_names', data=du.IndepTestDataset.f['snp_names'])
-        matched_f.create_dataset('scale', data=np.array([scale]))
-        matched_f.close()
-
-        print('---\n')
-    
-    else:
-        matched_f = h5py.File(args.matched_test_dataset, 'r')
-        du.IndepTestDataset.data_x = np.array(matched_f['inputs'], dtype=np.int8)
-        scale = matched_f['scale'][0]
-        print('scale:', scale)
 
     # ---------------------------------------------------------------
     #                 ---- INFO FROM TRAINING PHASE ----
@@ -180,7 +180,7 @@ def test():
     print('\nModel:', model_handler.model)
     
     # Loading trained model parameters
-    checkpoint = torch.load(args.model_params, map_location=torch.device(device), weights_only=False)
+    checkpoint = torch.load(args.model_params, weights_only=False)
     model_handler.model.load_state_dict(checkpoint['model_state_dict'])
     print('\nLoaded model parameters from {} at epoch {}'.format(
           args.model_params, checkpoint['epoch']))
@@ -219,6 +219,13 @@ def test():
              samples=test_results['samples'],
              preds=test_results['preds'],
              scores=test_results['scores'])
+
+    results_path_file = os.path.join(args.test_path, args.test_name+'_results.tsv')
+    with open(results_path_file, "w") as f:
+        f.write("sample\tprediction\n")
+        for s, p in zip(samples, test_results['preds']):
+            f.write(f"{str(s)}\t{int(p)}\n")
+
     print('Test results were saved to {}'.format(results_path_file))
     print('---')
 
@@ -319,7 +326,6 @@ def parse_args():
             help=('Trained model of which fold to test (1st fold is 0). '
                   'Default: %(default)i')
             )
-
     return parser.parse_args()
 
 
