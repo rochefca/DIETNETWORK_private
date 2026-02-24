@@ -122,10 +122,10 @@ echo ""
 
 # Output file with all model predictions for each sample
 python ${dietnet_code_path}/inference_combine_results.py \
---dietnet-results ${output_dir}/${output_name}_model${fold}_${rep}_infered.npz \
+--dietnet-results ${output_dir}/${output_name}_model{fold}_{rep}_infered.npz \
 --out ${output_name}_dietnet_predictions.txt
 
 echo "Inference with Dietnet completed. Predictions saved in ${output_name}_dietnet_predictions.txt"
 echo ""
 echo "The SNP overlap with Diet Network is: $(wc -l < ${output_name}_dietnetsnps_extractedsnps.txt) out of $(wc -l < ${dietnet_files_path}/DN_SNPS/dietnet_snps.txt) SNPs used to train the Diet Network."
-echo "We suggest to not consider predictions if the SNP overlap is less than 1000 SNPs."
+echo "Note that we suggest to not consider predictions if the SNP overlap is less than 1000 SNPs."

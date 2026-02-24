@@ -154,6 +154,7 @@ def main():
     
     aux_state_dict = make_statedict_aux_network(state_dict)
     aux_net.load_state_dict(aux_state_dict)
+    aux_net.to(device)
     
     # Get the fat layer parameters from the aux net
     fatlayer_weights = torch.transpose(aux_net(emb),1,0)
@@ -161,6 +162,7 @@ def main():
     # Main net state dict
     main_state_dict = make_statedict_main_network(state_dict, fatlayer_weights)
     main_net.load_state_dict(main_state_dict)
+    main_net.to(device)
     
     # Data for normalization of genotypes
     norm_stats = np.load(args.norm_stats)
