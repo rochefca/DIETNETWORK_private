@@ -95,17 +95,16 @@ def test():
         du.IndepTestDataset.data_x = matched_genotypes
     
         # Saving the matched dataset
-        #filename = 'test_dataset_CAGv1_12063inds_173605snps_matchedto1000G.hdf5'
-        #print('Saving matched dataset to: {}'.format(filename))
-        #print(list(du.IndepTestDataset.f.keys()))
-        #matched_f = h5py.File(filename, 'w')
-        #matched_f.create_dataset('inputs', data=matched_genotypes)
-        #matched_f.create_dataset('samples', data=du.IndepTestDataset.f['samples'])
-        #matched_f.create_dataset('snp_names', data=du.IndepTestDataset.f['snp_names'])
-        #matched_f.create_dataset('scale', data=np.array([scale]))
-        #matched_f.close()
+        filename = args.test_dataset.split('.hdf5')[0] + '.matched.hdf5'
+        print('Saving matched dataset to: {}'.format(filename))
+        matched_f = h5py.File(filename, 'w')
+        matched_f.create_dataset('inputs', data=matched_genotypes)
+        matched_f.create_dataset('samples', data=du.IndepTestDataset.f['samples'])
+        matched_f.create_dataset('snp_names', data=du.IndepTestDataset.f['snp_names'])
+        matched_f.create_dataset('scale', data=np.array([scale]))
+        matched_f.close()
 
-        #print('---\n')
+        print('---\n')
     
     else:
         matched_f = h5py.File(args.matched_test_dataset, 'r')
@@ -181,7 +180,7 @@ def test():
     print('\nModel:', model_handler.model)
     
     # Loading trained model parameters
-    checkpoint = torch.load(args.model_params)
+    checkpoint = torch.load(args.model_params, map_location=torch.device(device), weights_only=False)
     model_handler.model.load_state_dict(checkpoint['model_state_dict'])
     print('\nLoaded model parameters from {} at epoch {}'.format(
           args.model_params, checkpoint['epoch']))
