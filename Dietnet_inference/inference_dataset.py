@@ -18,7 +18,6 @@ def main():
     #----------------------------------------------
     #               PARSE GENOTYPES
     #----------------------------------------------
-    print('\n---')
     genotype_start_time = time.time()
 
     # Multiprocessing to load lines in parallel
@@ -46,12 +45,11 @@ def main():
 
     print('Parsed {} genotypes of {} samples in {} seconds'.format(
           len(snps), len(samples), time.time() - genotype_start_time))
-    print('---\n')
 
     #----------------------------------------------
     #           WRITE DATASET TO FILE
     #----------------------------------------------
-    print('\n---\nSaving dataset to {}'.format(args.out))
+    print('Saving dataset to {}'.format(args.out))
 
     # Create dataset
     f = h5py.File(args.out, 'w')
@@ -68,7 +66,6 @@ def main():
     f.close()
 
     print('Created hdf5 dataset in {} seconds'.format(time.time()-start_time))
-    print('---\n')
 
 
 # Load genotypes of a sample from a line in the genotype file

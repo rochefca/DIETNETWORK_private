@@ -116,12 +116,9 @@ def main():
     # Parse line command arguments
     args = parse_args()
 
-    # Set device
-    print('\n---\nSetting device')
     print('Cuda available:', torch.cuda.is_available())
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print('Device:', device)
-    print('---\n')
 
 
     #-------------
@@ -183,7 +180,6 @@ def main():
     batch_start=0
     for i,batch in enumerate(inference_loader):
         batch_end = batch_start + batch.shape[0]
-        print('Batch {}: samples {} to {}'.format(i, batch_start, batch_end-1))
         
         batch = batch.to(device).float()
         
@@ -224,7 +220,7 @@ def main():
              preds=results['preds'],
              scores=results['scores'],
              last_hidden_layer=results['last_hidden_layer'])
-    print('Inference results were saved to {}'.format(args.out))
+    print('Inference results saved to {}'.format(args.out))
 
 
 def make_statedict_aux_network(state_dict):
