@@ -1,39 +1,80 @@
 # Diet Network
 
-Pytorch implementation of Diet Network (https://arxiv.org/abs/1611.09340) 
+A deep learning framework for genetic ancestry inference from SNP genotype data.
 
-## Diet Network for genetic ancestry inference
-Trained models and supporting files for genetic ancestry prediction are available on Zenodo (https://doi.org/10.5281/zenodo.16943453). The models are trained to classify individuals into 24 populations using the Thousand Genomes Project dataset. For more details on the models and their evaluation see *A Transparent and Generalizable Deep Learning Framework for Genomic Ancestry Prediction* paper. The Zenodo contains : 
+The released pretrained models were trained on the 1000 Genomes Project (1KGP) dataset to classify individuals into 24 populations.
 
-- Trained model weights: trainedmodels_modelweights.tar.gz
-- Supporting files: trainedmodels_supportingfiles.tar.gz
-- Training data: training_data.tar.gz
+Pretrained models are available for download on [Zenodo](https://zenodo.org/records/16943452)
 
+For full methodological details, see:
+[A Transparent and Generalizable Deep Learning Framework for Genomic Ancestry Prediction](https://www.biorxiv.org/content/10.1101/2025.08.26.672448v1)
 
-## Usage
-
-### Using the trained models for genetic ancestry inference
-Download the pretrained weights and supporting files from Zenodo, then:
-
+## Installation
+##### 1. Clone the repository
 ```
-python test_independent_dataset.py \
---model-params trainedmodels_modelweights/model_rep{1-3}_fold{0-4}.pt \
---train-dataset trainedmodels_supportingfiles/training_dataset_info.hdf5 \
---normalize \
---test-path <your_test_directory> \
---test-name <your_test_name> \
---test-dataset <your_hdf5_test_dataset> \
---config trainedmodels_supportingfiles/config_rep{1-3}models.yaml \
---task classification \
---input-features-stats trainedmodels_supportingfiles/normalization_stats.npz \
---embedding trainedmodels_supportingfiles/SNPs_embedding.npz \
---which-fold {0-4}
+git clone https://github.com/HussinLab/DIETNETWORK.git
+```
+##### 2. Create a Python virtual environment and install dependencies
+For inference we used Python 3.11.5
+```
+# Create the environment
+python3 -m venv <env_name>
+
+# Activate the environment
+source <env_name>/bin/activate
+
+# Install dependencies in the activated environment using the provided requirements file
+pip install -r DIETNETWORK/Dietnet_inference/dietnet_infer_python3115_requirements.txt
 ```
 
-### Training models from scratch
+##### 3. Download pretrained models and training files
+Download Dietnet_inference direcotry from https://zenodo.org/records/16943452.
+Place them in your desired directory (you will provide this path during inference).
 
-### Training Diet Network on another task
-The Diet Network code availbale here can be use on another genetic prediction task (classification or regression). Steps below indicate how to create the files to train such models.
+##### 4. Install PLINK
+We used PLINK v1.9.
+Ensure the executable is installed and accessible.
+
+
+## Inference
+Infer genetic ancestry in a query dataset. Diet Network inference uses an ensemble of 15 trained models.
+
+#### Input requirements
+The query dataset must
+- Be in PLINK format (.bed, .bim, .fam)
+- Have genotypes harmonized to the GRCh38 reference genome
+- Ideally be filtered for missingness (e.g., remove SNPs with >10% missing data)
+
+#### Running inference
+##### 1. Activate the virtual environement
+```
+source <env_name>/bin/activate
+```
+
+##### 2. Run the inference script
+```
+bash DIETNETWORK/Dietnet_inference/infer.sh <plink_prefix> <output_prefix> <plink_path> <dietnet_path>
+```
+- `plink_prefix` Prefix of the PLINK dataset (e.g., `mydata` for `mydata.bed/.bim/.fam`)
+- `output_prefix` Prefix for output files
+- `plink_path` Path to the PLINK executable (e.g., `bin/plink`)
+- `dietnet_path` Path to the to the Diet Network inference directory (e.g., `~/Downloads/DIETNETWORK/Dietnet_inference`)
+
+#### Output files
+At the end of the run, the following files and directories are generated:
+- `<output_prefix>.hdf5` HDF5 file containing the processed Diet Network input dataset generated from the query PLINK files.
+- `<output_prefix>_dietnetsnps_extractedsnps.txt` List of SNPs from the query dataset that overlap with the SNPs used to train the Diet Network models.
+- `<output_prefix>_dietnetsnps_notextractedsnps.txt` List of training SNPs that were not found in the query PLINK dataset.
+- `<output_prefix>_dietnet_predictions.txt` Tab-delimited file containing all samples and their predicted ancestry labels across the 15 trained models.
+- `<output_prefix>_DIETNET_RESULTS_BY_MODEL/output_prefix_model{1-5}_{1-3}_infered.npz` Directory containing per-model outputs, including:
+  -  Predicted ancestry label
+  -  Softmax probability scores
+  -  Final hidden-layer embeddings for each sample
+
+
+
+## Training models
+The Diet Network code can be use to retrain models on the 1KGP dataset, to train on another dataset or on another genetic prediction task (classification or regression). Steps below indicate how to create the files to train such models.
 
 #### Create Dataset
 Create a hdf5 dataset from genotype and label files.
