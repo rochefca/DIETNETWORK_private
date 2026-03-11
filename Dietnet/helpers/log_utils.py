@@ -8,12 +8,15 @@ import numpy as np
 import torch
 
 
-def create_out_dir(exp_path, exp_name, fold):
+def create_out_dir(exp_path, exp_name, fold, seed=None):
     """
-    This creates a directory exp_path/exp_name/exp_name_fold
-    to save the results
+    This creates a directory exp_path/exp_name/exp_name_seed{seed}_fold{fold}
+    (or exp_path/exp_name/exp_name_fold{fold} when seed is None) to save results.
     """
-    dir_name = exp_name + '_fold' + str(fold)
+    if seed is not None:
+        dir_name = f"{exp_name}_seed{seed}_fold{fold}"
+    else:
+        dir_name = exp_name + '_fold' + str(fold)
     dir_path = os.path.join(exp_path, exp_name, dir_name)
 
     # Create directory
@@ -54,18 +57,18 @@ def save_model_summary(out_dir, model, criterion, optimizer):
     text = '*'*50
     text += '\nAuxiliary network (feature embedding network):\n'
     text += '*'*50 + '\n'
-    text += str(model.feat_emb)
+    text += str(model.aux_net)
     text += '\nForward function of auxiliary net:\n'
-    text += inspect.getsource(model.feat_emb.forward)
+    text += inspect.getsource(model.aux_net.forward)
     text += '\n' + '-'*80
 
     text += '\n' + '*'*40
     text += '\nMain network (discriminative network):\n'
     text += '*'*40 + '\n'
-    text += str(model.disc_net)
+    text += str(model.main_net)
     text += '\nForward function of main net:\n'
-    text += inspect.getsource(model.disc_net.forward)
-    bias = False if model.disc_net.fat_bias is None else True
+    text += inspect.getsource(model.main_net.forward)
+    bias = False if model.main_net.fat_bias is None else True
     text += '\n --> Fat layer has bias param:' + str(bias) + '\n'
     text += '\n' + '-'*80
 
@@ -74,7 +77,7 @@ def save_model_summary(out_dir, model, criterion, optimizer):
     text += '*'*20 + '\n'
     text += str(model)
     text += '\nForward function of combined models:\n'
-    text += inspect.getsource(model.disc_net.forward)
+    text += inspect.getsource(model.main_net.forward)
 
     text += '\n' + '-'*80
     text += '\n' + '*'*20
@@ -93,6 +96,17 @@ def save_model_params(out_dir, model, filename='model_params.pt'):
     print('Saving model parameters to %s' % os.path.join(out_dir, filename))
 
     torch.save(model.state_dict(), os.path.join(out_dir, filename))
+
+
+def save_predictions_tsv(out_dir, samples, pred_indices, label_names):
+    filename = 'predictions.tsv'
+
+    print('Saving text predictions to %s' % os.path.join(out_dir, filename))
+
+    with open(os.path.join(out_dir, filename), 'w') as f:
+        for sample_id, pred_idx in zip(samples, pred_indices):
+            label_name = label_names[int(pred_idx)]
+            f.write(f"{sample_id}\t{label_name}\n")
 
 
 def save_results(out_dir, samples, labels, label_names, score, pred):

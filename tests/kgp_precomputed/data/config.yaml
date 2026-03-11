@@ -1,5 +1,5 @@
 batch_size: 138
-epochs: 100 #8000
+epochs: 10 #8000
 input_dropout: 0.995
 dropout_main: 0.1
 lr_aux: 0.000600

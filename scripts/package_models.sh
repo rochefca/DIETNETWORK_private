@@ -6,6 +6,10 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# User configuration
+SOURCE_DIR="${1:-pretrained_1000g_models}"   # pass as arg or set here
+OUTPUT="${2:-dietnet_1kgp_default_v1.tar.gz}"
+
 echo "=========================================="
 echo "Packaging DietNetwork 1KGP Model"
 echo "=========================================="
@@ -13,16 +17,16 @@ echo "=========================================="
 cd "$PROJECT_ROOT"
 
 # Check source exists
-if [ ! -d "pretrained_1000g_models" ]; then
-    echo "ERROR: pretrained_1000g_models/ not found"
-    echo "Expected location: $PROJECT_ROOT/pretrained_1000g_models"
+if [ ! -d "$SOURCE_DIR" ]; then
+    echo "ERROR: $SOURCE_DIR/ not found"
+    echo "Expected location: $PROJECT_ROOT/$SOURCE_DIR"
     echo "This should contain all 15 models (3 seeds × 5 folds)"
     exit 1
 fi
 
 # Count models
-N_MODELS=$(find pretrained_1000g_models -name "metadata.json" | wc -l)
-echo "Found $N_MODELS models in pretrained_1000g_models/"
+N_MODELS=$(find "$SOURCE_DIR" -name "metadata.json" | wc -l)
+echo "Found $N_MODELS models in $SOURCE_DIR/"
 
 if [ "$N_MODELS" -ne 15 ]; then
     echo "WARNING: Expected 15 models (3 seeds × 5 folds), found $N_MODELS"
@@ -34,11 +38,10 @@ if [ "$N_MODELS" -ne 15 ]; then
 fi
 
 # Create tarball
-OUTPUT="dietnet_1kgp_default_v1.tar.gz"
 echo "Creating $OUTPUT..."
 
 # Create tarball from inside the directory so it extracts without the parent folder
-cd pretrained_1000g_models
+cd "$SOURCE_DIR"
 tar -czf "../$OUTPUT" seed_*
 cd ..
 

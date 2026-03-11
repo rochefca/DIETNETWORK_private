@@ -273,7 +273,7 @@ def _train_with_plink_packages(exp_path, exp_name, config, plink_prefix,
     plink_prefix_path = _normalize_plink_prefix(plink_prefix)
     dataset_arg = f"{plink_prefix_path}.bed"
     dataset_file = _resolve_path(exp_path, dataset_arg)
-    bim_file = dataset_file.with_suffix('.bim')
+    bim_file = Path(str(dataset_file)[:-4] + '.bim')
 
     if not dataset_file.exists():
         click.echo(f"ERROR: Training PLINK file not found: {dataset_file}", err=True)
@@ -369,7 +369,7 @@ def _train_with_plink_packages(exp_path, exp_name, config, plink_prefix,
             # Run training for this seed/fold
             train_module.main_with_args(args)
 
-            out_dir = exp_path / exp_name / f"{exp_name}_fold{fold}"
+            out_dir = exp_path / exp_name / f"{exp_name}_seed{seed_value}_fold{fold}"
             checkpoint = _find_model_checkpoint(out_dir)
             if checkpoint is None:
                 click.echo(f"ERROR: No checkpoint found in {out_dir}; skipping packaging.", err=True)
@@ -446,22 +446,18 @@ def _select_embedding_for_fold(embedding_data, fold: int):
 def _extract_input_stats_for_fold(stats_data, fold: int):
     import numpy as np
 
+    # Format written by compute_input_features_mean.py:
+    #   means_by_fold[fold] = mean array, sd_by_fold[fold] = std array
     if 'means_by_fold' in stats_data:
-        fold_stats = stats_data['means_by_fold'][fold]
-        if isinstance(fold_stats, np.ndarray) and fold_stats.dtype == object:
-            fold_stats = fold_stats.tolist()
-        mean = np.array(fold_stats[0])
-        std = np.array(fold_stats[1]) if len(fold_stats) > 1 else None
+        mean = np.array(stats_data['means_by_fold'][fold])
+        std = np.array(stats_data['sd_by_fold'][fold]) if 'sd_by_fold' in stats_data else None
     else:
-        mean = stats_data['mean']
-        std = stats_data['std'] if 'std' in stats_data else None
-        mean = np.array(mean)
+        mean = np.array(stats_data['mean'])
+        std = np.array(stats_data['std']) if 'std' in stats_data else None
         if mean.ndim > 1 and mean.shape[0] > fold:
             mean = mean[fold]
-        if std is not None:
-            std = np.array(std)
-            if std.ndim > 1 and std.shape[0] > fold:
-                std = std[fold]
+        if std is not None and std.ndim > 1 and std.shape[0] > fold:
+            std = std[fold]
 
     input_stats = {'mean': np.asarray(mean)}
     if std is not None:
@@ -930,14 +926,14 @@ def create_dataset(genotypes, labels, output_dir, output_name, task,
 @click.option(
     '--train-valid-ratio',
     type=float,
-    default=0.8,
-    help='Train/validation split ratio (default: 0.8).'
+    default=0.75,
+    help='Train/validation split ratio (default: 0.75).'
 )
 @click.option(
     '--seed',
     type=int,
-    default=42,
-    help='Random seed for reproducibility (default: 42).'
+    default=23,
+    help='Random seed for reproducibility (default: 23).'
 )
 @click.option(
     '--stratify/--no-stratify',
@@ -1228,20 +1224,45 @@ def preprocess_plink(model, plink_prefix, output_prefix, plink_bin, force):
     default=None,
     help='Maximum expected accuracy (exits with error if above).'
 )
-def check(predictions, labels, min_accuracy, max_accuracy):
+@click.option(
+    '--partition-file',
+    type=click.Path(exists=True),
+    default=None,
+    help='Partition NPZ (from dietnet partition) to filter predictions to a specific test fold.'
+)
+@click.option(
+    '--fold',
+    type=int,
+    default=None,
+    help='Which fold\'s test split to filter to (required with --partition-file).'
+)
+def check(predictions, labels, min_accuracy, max_accuracy, partition_file, fold):
     """
     Validate predictions against true labels.
 
     Computes overall accuracy and per-class accuracy, optionally checking
     against expected accuracy thresholds.
 
+    Use --partition-file and --fold to filter to only test-fold samples (avoids
+    inflated accuracy when predictions cover all samples including training data).
+
     Example:
-        dietnet check --predictions predictions.txt \\
+        dietnet check --predictions predictions.tsv \\
                       --labels labels.tsv \\
                       --min-accuracy 0.85
+
+        dietnet check --predictions all_preds.tsv \\
+                      --labels labels.tsv \\
+                      --partition-file partitioned_idx.npz \\
+                      --fold 0
     """
+    import numpy as np
     import pandas as pd
     from pathlib import Path
+
+    if partition_file is not None and fold is None:
+        click.echo("ERROR: --fold is required when --partition-file is provided.", err=True)
+        sys.exit(1)
 
     # Parse compact prediction format: "<sample_id> <label>" or "<sample_id> <labelA>(count) ..."
     lines = []
@@ -1282,29 +1303,43 @@ def check(predictions, labels, min_accuracy, max_accuracy):
         click.echo("ERROR: No matching samples found between predictions and labels", err=True)
         sys.exit(1)
 
+    # Optionally filter to test-fold samples only
+    if partition_file is not None:
+        partition_data = np.load(partition_file, allow_pickle=True)
+        if 'sample_ids' not in partition_data:
+            click.echo(
+                "ERROR: Partition file does not contain 'sample_ids'. "
+                "Re-run 'dietnet partition' to regenerate it.",
+                err=True
+            )
+            sys.exit(1)
+        # Validate requested fold index against available folds
+        num_folds = len(partition_data['folds_indexes'])
+        if fold < 0 or fold >= num_folds:
+            raise click.BadParameter(
+                f"Fold index {fold} is out of range for partition file; "
+                f"valid fold indices are 0 to {num_folds - 1}.",
+                param_hint="fold",
+            )
+        all_sample_ids = partition_data['sample_ids'].astype(str)
+        test_indices = partition_data['folds_indexes'][fold][2]
+        test_sample_ids = set(all_sample_ids[test_indices])
+        merged = merged[merged['sample_id'].isin(test_sample_ids)]
+        if len(merged) == 0:
+            click.echo(
+                f"ERROR: No samples remaining after filtering to fold {fold} test split.",
+                err=True
+            )
+            sys.exit(1)
+        click.echo(f"Filtered to fold {fold} test split: {len(merged)} samples")
+
     # Get true labels
     true_labels = merged[label_class_col]
     predicted_labels = merged['predicted_class']
 
-    # Overall accuracy
+    _print_accuracy_table(true_labels, predicted_labels)
+
     overall_accuracy = (predicted_labels == true_labels).mean()
-
-    click.echo("=" * 60)
-    click.echo("Prediction Validation Results")
-    click.echo("=" * 60)
-    click.echo(f"Total samples: {len(merged)}")
-    click.echo(f"Overall accuracy: {overall_accuracy:.2%}")
-    click.echo("")
-
-    # Per-class accuracy
-    click.echo("Per-class accuracy:")
-    click.echo("-" * 60)
-    for label in sorted(true_labels.unique()):
-        mask = true_labels == label
-        class_acc = (predicted_labels[mask] == true_labels[mask]).mean()
-        class_count = mask.sum()
-        click.echo(f"  {label:15s}: {class_acc:6.2%}  ({class_count:4d} samples)")
-    click.echo("=" * 60)
 
     # Check thresholds
     if min_accuracy is not None:
@@ -1318,6 +1353,28 @@ def check(predictions, labels, min_accuracy, max_accuracy):
             sys.exit(1)
 
     click.echo("✓ PASSED")
+
+
+def _print_accuracy_table(true_labels, predicted_labels):
+    """Print overall and per-class accuracy table."""
+    overall_accuracy = (predicted_labels == true_labels).mean()
+
+    click.echo("=" * 60)
+    click.echo("Prediction Validation Results")
+    click.echo("=" * 60)
+    click.echo(f"Total samples: {len(true_labels)}")
+    click.echo(f"Overall accuracy: {overall_accuracy:.2%}")
+    click.echo("")
+
+    # Per-class accuracy
+    click.echo("Per-class accuracy:")
+    click.echo("-" * 60)
+    for label in sorted(true_labels.unique()):
+        mask = true_labels == label
+        class_acc = (predicted_labels[mask] == true_labels[mask]).mean()
+        class_count = mask.sum()
+        click.echo(f"  {label:15s}: {class_acc:6.2%}  ({class_count:4d} samples)")
+    click.echo("=" * 60)
 
 
 @main.command()
