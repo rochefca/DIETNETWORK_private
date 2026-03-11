@@ -27,3 +27,11 @@ tests/.ipynb_checkpoints/
 
 # Distribution packages
 *.tar.gz
+
+# Deprecated files
+deprecated/
+bin/
+logs/
+preprocessed_plink/
+tests/outputs/
+uv.lock
