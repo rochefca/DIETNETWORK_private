@@ -473,8 +473,6 @@ def train(config, comet_log, comet_project_name, optimization_exp):
         # --- Early stopping ---
         if patience >= max_patience:
             has_early_stoped = True
-            break
-
             # log best validation results to comet
             if comet_log:
                 if config['specifics']['task'] == 'classification':
@@ -483,7 +481,7 @@ def train(config, comet_log, comet_project_name, optimization_exp):
 
                 if config['specifics']['task'] == 'regression':
                     experiment.log_metric("best_valid_loss", best_result[0])
-            break # exit training loop
+            break  # exit training loop
 
         # ---Anneal learning rate---
         for param_group in optimizer.param_groups:
