@@ -424,17 +424,14 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     pbar = tqdm(range(n_epochs), desc='Training', unit='epoch')
     for epoch in pbar:
 
-        # --- Train step ---
+        # --- Train step (metrics computed for free during the forward pass) ---
         comb_model.train()
-        mlu.train_step(comb_model, device, optimizer,
+        epoch_train_result = mlu.train_step(comb_model, device, optimizer,
                 train_generator, len(train_set), criterion, mus, sigmas, emb,
                 config['specifics']['task'], config['specifics']['normalize'])
 
-        # --- Eval on train and valid sets ---
+        # --- Eval on valid set only (used for early stopping) ---
         comb_model.eval()
-        epoch_train_result = mlu.eval_step(comb_model, device,
-                train_generator, len(train_set), criterion, mus, sigmas, emb,
-                config['specifics']['task'], config['specifics']['normalize'])
         epoch_valid_result = mlu.eval_step(comb_model, device,
                 valid_generator, len(valid_set), criterion, mus, sigmas, emb,
                 config['specifics']['task'], config['specifics']['normalize'])
