@@ -121,6 +121,28 @@ dietnet train \
 Packages land in `<exp-path>/<exp-name>_packages/seed_*/fold_*/` by default and are ready for `dietnet predict`.
 `--seeds` and `--folds` are Click “multiple” options: repeat the flag (`--seeds 42 --seeds 43`) or provide comma-separated values in one flag (`--seeds 42,43`). The same applies to `--folds`.
 
+## Evaluate Accuracy
+
+```bash
+# Check accuracy on all predicted samples
+dietnet check \
+    --predictions predictions.tsv \
+    --labels /path/to/labels.tsv
+
+# Check accuracy on test-fold only (avoids train/val inflation)
+dietnet check \
+    --predictions predictions.tsv \
+    --labels /path/to/labels.tsv \
+    --partition-file /path/to/partitioned_idx.npz \
+    --fold 0
+
+# Assert accuracy is within expected range (exits non-zero if violated)
+dietnet check \
+    --predictions predictions.tsv \
+    --labels /path/to/labels.tsv \
+    --min-accuracy 0.85
+```
+
 ## Using Pre-trained Model
 
 ### Preset models
