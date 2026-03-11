@@ -6,9 +6,10 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Source data paths
-PLINK_PREFIX="/lustre06/project/6065672/shared/DietNet/1KGB_POP24/1KGP/WGS30X_V1/1000G.2504_WGS30x.GSA17k_MHI.intersectGSA.miss10perc.maf0.05.pruned.autosomes.noHLA.phased_imputed_V1"
-LABELS="/lustre06/project/6065672/shared/DietNet/1KGB_POP24/1KGP/WGS30X_V1/labels_pop_subsampleV1.tsv"
+# User configuration (edit these or pass as environment variables)
+PLINK_PREFIX="${PLINK_PREFIX:-/path/to/plink_prefix}"
+LABELS="${LABELS:-/path/to/labels.tsv}"
+OUTPUT="${OUTPUT:-dietnet_1kgp_test_data_v1.tar.gz}"
 
 echo "=========================================="
 echo "Packaging DietNetwork 1KGP Test Data"
@@ -48,7 +49,6 @@ cp "$LABELS" "$TEMP_DIR/1kgp_test_data/"
 echo ""
 echo "Creating tarball..."
 cd "$TEMP_DIR"
-OUTPUT="dietnet_1kgp_test_data_v1.tar.gz"
 tar -czf "$OUTPUT" 1kgp_test_data/
 
 # Move to project root

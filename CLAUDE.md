@@ -8,41 +8,71 @@ This is a PyTorch implementation of DietNetwork (https://arxiv.org/abs/1611.0934
 - **Auxiliary Network** (feature embedding network): Learns genotype frequency embeddings
 - **Discriminative Network** (main network): Performs classification using the learned embeddings
 
-## Current State and Known Issues
+## Current State
 
-**CRITICAL LIMITATIONS:**
-1. No dependency management (no setup.py, pyproject.toml, or requirements.txt)
-2. No unit tests
-3. No CLI or proper entry points
-4. Pipeline converts PLINK files → HDF5 → DietNetwork (inefficient, should read PLINK directly)
+The project is a packaged Python tool (`pyproject.toml`, `hatchling` build backend) with a `dietnet` CLI entry point. PLINK files are read directly — no HDF5 intermediate step required for the main pipeline.
 
-The codebase has working pre-trained models in `other_code/neededfiles/` but needs significant refactoring.
+**Remaining limitations:**
+1. Unit tests are minimal (smoke tests only)
+2. `other_code/` contains old scripts that diverged from current `Dietnet/helpers/`
+
+## CLI — `dietnet`
+
+Installed via `pip install -e .` (or `uv pip install -e .`). Entry point: `Dietnet/cli.py`.
+
+### Pipeline commands (canonical order)
+
+```bash
+# [1] Partition data into k folds
+dietnet partition --exp-path DIR --dataset PLINK.bed --label-file LABELS.tsv \
+  --nb-folds 5 --stratify --output-name partitioned_idx.npz
+
+# [2] Compute genotype frequency embeddings per fold
+dietnet generate-embedding --exp-path DIR --dataset PLINK.bed \
+  --partition partitioned_idx.npz --label-file LABELS.tsv \
+  --output-name embedding.npz
+
+# [3] Compute per-fold feature means/stds (for imputation & normalization)
+dietnet compute-input-stats --exp-path DIR --dataset PLINK.bed \
+  --partition partitioned_idx.npz --output-name input_features_means.npz
+
+# [4] Train
+dietnet train --exp-path DIR --exp-name NAME --config config.yaml \
+  --plink-prefix PLINK_PREFIX --label-file LABELS.tsv \
+  --partition partitioned_idx.npz --embedding embedding.npz \
+  --input-features-means input_features_means.npz \
+  --seeds 78 --folds 0 --output-dir PACKAGE_DIR
+
+# [5] Predict
+dietnet predict --model PACKAGE_DIR --plink-prefix PLINK_PREFIX \
+  --output predictions.tsv --seeds 78 --folds 0
+```
+
+### Other commands
+- `dietnet create-dataset` — convert text genotypes → HDF5 (legacy use)
+- `dietnet preprocess-plink` — pre-convert PLINK to npz for faster loading
+- `dietnet check` — evaluate predictions vs ground-truth labels
+- `dietnet analyze-population` — population-level accuracy plots
+- `dietnet info` — show package/environment info
+
+**Removed command:** `dietnet compute-stats` was a broken duplicate of `compute-input-stats` and has been deleted.
 
 ## Architecture
-
-### Data Flow Pipeline
-
-```
-PLINK files (.bed/.bim/.fam)
-  → create_dataset.py → dataset.hdf5
-  → partition_data.py → folds_indexes.npz
-  → generate_embedding.py → embedding.npz
-  → train.py → model checkpoints (.pt)
-  → test_external_dataset.py → predictions
-```
 
 ### Core Components
 
 **Main Scripts (in `Dietnet/`):**
-- `create_dataset.py`: Parses PLINK/text genotype files into HDF5 format
-- `partition_data.py`: Creates k-fold cross-validation splits
+- `cli.py`: Click-based CLI entry point for all commands
+- `train.py`: Training loop with early stopping
 - `generate_embedding.py`: Computes genotype frequency embeddings per fold
-- `train.py`: Main training loop with early stopping
-- `test_external_dataset.py`: Inference on external datasets (SNP alignment required)
+- `compute_input_features_mean.py`: Computes per-fold feature means/stds; key function: `get_preprocessing_params(args=None)`
+- `predict_with_plink.py`: Inference on PLINK datasets
+- `partition_data.py`: Creates k-fold cross-validation splits
 
 **Helper Modules (in `Dietnet/helpers/`):**
-- `dataset_utils.py`: Data loading, shuffling, partitioning, preprocessing (missing value imputation, normalization)
+- `dataset_utils.py`: Data loading, preprocessing (missing value imputation, normalization)
 - `model.py`: Neural network definitions (`Feat_emb_net`, `Discrim_net`, `Discrim_net2`)
+- `model_package.py`: Model packaging/loading for inference
 - `mainloop_utils.py`: Training utilities (accuracy computation, evaluation step)
 - `log_utils.py`: Model and experiment tracking utilities
 - `model_handlers.py`: Handlers for DietNetwork and MLP architectures
@@ -64,21 +94,17 @@ PLINK files (.bed/.bim/.fam)
 ## Data Formats
 
 ### Input Files
-- **Genotypes**: Tab-separated text file with SNPs in additive encoding (0/1/2) or PLINK binary format (.bed/.bim/.fam)
-  - Missing values encoded as -1
-  - Header row: sample IDs
-  - First column: SNP names
+- **Genotypes**: PLINK binary format (.bed/.bim/.fam) — read directly via `pyplink`
+  - Missing values encoded as -1 internally
 - **Labels**: Tab-separated file with sample IDs and labels
-  - For regression: Include separate class labels file for embedding computation
 
-### Intermediate Files
-- **dataset.hdf5**: Contains `inputs` (genotypes), `labels`, `samples`, `snp_names`, `label_names`
-- **folds_indexes.npz**: Array of [train_idx, valid_idx, test_idx] for each fold
+### Key Intermediate Files
+- **partitioned_idx.npz**: Array of [train_idx, valid_idx, test_idx] for each fold
 - **embedding.npz**: Genotype frequency embeddings per fold
-- **input_stats.npz** or **input_features_means.npz**: Mean values for missing value imputation
+- **input_features_means.npz**: Per-fold feature means and stds for imputation/normalization
 
 ### Training Configuration
-Training uses YAML config files (see `other_code/neededfiles/config.yaml`):
+Training uses YAML config files (see `tests/kgp_precomputed/data/config.yaml`):
 ```yaml
 batch_size: 138
 epochs: 8000
@@ -96,7 +122,6 @@ uniform_init_limit: 0.02
 
 ## Training Reference Data
 
-Pre-trained models exist for 1000 Genomes Project data:
 - **PLINK files**: `/lustre06/project/6065672/shared/DietNet/1KGB_POP24/1KGP/WGS30X_V1/1000G.2504_WGS30x.GSA17k_MHI.intersectGSA.miss10perc.maf0.05.pruned.autosomes.noHLA.phased_imputed_V1.{bed,bim,fam}`
 - **Labels**: `/lustre06/project/6065672/shared/DietNet/1KGB_POP24/1KGP/WGS30X_V1/labels_pop_subsampleV1.tsv`
 - **Pre-trained models**: `other_code/neededfiles/best_model_seed_{78,79,80}_fold{0-4}/best_model.pt`
@@ -112,19 +137,6 @@ Pre-trained models exist for 1000 Genomes Project data:
 - Auxiliary network: Square Euclidean distance normalization
 - Discriminative network: Standardization (z-score) using training set statistics
 
-**SNP Alignment (for external datasets):**
-- `test_external_dataset.py` aligns test SNPs to training SNPs by chromosome:position
-- Missing SNPs in test data filled with -1 (then imputed)
-
-## Running Inference (Example from other_code)
-
-The bash script `other_code/generalisation_v4.sh` shows production inference workflow:
-1. Load environment and modules
-2. Loop over seeds × folds × data chunks
-3. Run `test_independent_dataset_v4.py` for each chunk
-4. Merge chunk predictions
-5. Aggregate predictions across models (voting)
-
 ## Key Design Patterns
 
 **Two-Stage Training:**
@@ -136,36 +148,34 @@ The bash script `other_code/generalisation_v4.sh` shows production inference wor
 - Embeddings computed per fold (avoiding data leakage)
 - Early stopping on validation set
 
-**HDF5 Usage:**
-- Lazy loading via torch.utils.data.Dataset
-- Files kept open during training (`FoldDataset.f`)
-- External test data uses separate `IndepTestDataset` class
+## Scripts
+
+- `scripts/sbatch_1kgp_train_eval.sh` — full train+eval pipeline on 1KGP data (SLURM)
+- `scripts/sbatch_train_predict_ensemble.sh` — ensemble train+predict (SLURM)
+- `scripts/sbatch_train_hgdp_ukbb.sh` — train on HGDP/UKBB data (SLURM)
+- `scripts/train_predict.sh` — local train+predict convenience script
+- `scripts/predict_external.sh` — predict on an external dataset
+
+## Tests
+
+- `tests/kgp_precomputed/run_smoke_test.sh` — smoke test with pre-trained model
+- `tests/kgp_precomputed/run_train_smoke.sh` — smoke test full train pipeline
+- `tests/kgp_precomputed/download_test_data.sh` — download 1KGP test data
+- `tests/kgp_precomputed/download_model.sh` — download pre-trained model
+
+## Dependencies
+
+Managed via `pyproject.toml`. Key packages:
+```
+python >= 3.10
+torch >= 2.0.0
+numpy, pandas, h5py, pyyaml, click, pyplink, scikit-learn, tqdm, matplotlib
+captum (optional, for interpretability)
+comet-ml (optional, for experiment tracking)
+```
+
+Install: `uv pip install -e .` or `pip install -e .`
 
 ## Interpretability
 
-The `Dietnet/Interpretability/` module provides:
-- Attribution analysis (using Captum library)
-- SNP importance experiments
-- Graph-based attribution management
-
-## Dependencies (Inferred)
-
-```
-python >= 3.6
-torch >= 1.5.0
-numpy
-pandas
-h5py
-yaml
-comet_ml (optional, for experiment tracking)
-captum (for interpretability)
-pyplink (for reading PLINK files directly)
-```
-
-## Future Refactoring Priorities
-
-1. **Direct PLINK reading**: See `999_recompute_pca.ipynb` for pyplink example
-2. **Dependency management**: Create pyproject.toml with uv/pip
-3. **CLI**: Use argparse/click for unified train/inference commands
-4. **Unit tests**: Test data loading, preprocessing, model forward passes
-5. **Consolidate duplicated code**: `other_code/` has copies of helpers that diverged from `Dietnet/helpers/`
+The `Dietnet/Interpretability/` module provides attribution analysis (Captum library), SNP importance experiments, and graph-based attribution management.
