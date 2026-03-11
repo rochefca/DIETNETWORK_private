@@ -10,6 +10,21 @@ from pathlib import Path
 import click
 
 
+def _parse_int_multi(ctx, param, value):
+    """
+    Support repeated flags or comma-separated lists: --seeds 1 --seeds 2,3
+    """
+    if value is None:
+        return None
+    out = []
+    for item in value:
+        for part in str(item).split(','):
+            part = part.strip()
+            if part:
+                out.append(int(part))
+    return out
+
+
 @click.group()
 @click.version_option(version="0.2.0")
 def main():
@@ -56,17 +71,19 @@ def main():
 )
 @click.option(
     '--seeds',
-    type=int,
     multiple=True,
-    default=(),
-    help='Seeds to train (space-separated list; default: seed from config).'
+    callback=_parse_int_multi,
+    type=str,
+    default=None,
+    help='Seeds to train (repeat flag or comma-separated; default: seed from config).'
 )
 @click.option(
     '--folds',
-    type=int,
     multiple=True,
-    default=(),
-    help='Folds to train (space-separated list; default: all folds from partition).'
+    callback=_parse_int_multi,
+    type=str,
+    default=None,
+    help='Folds to train (repeat flag or comma-separated; default: all folds).'
 )
 @click.option(
     '--task',
@@ -254,7 +271,7 @@ def _train_with_plink_packages(exp_path, exp_name, config, plink_prefix,
 
     # Resolve PLINK paths
     plink_prefix_path = _normalize_plink_prefix(plink_prefix)
-    dataset_arg = str(plink_prefix_path) + '.bed'
+    dataset_arg = f"{plink_prefix_path}.bed"
     dataset_file = _resolve_path(exp_path, dataset_arg)
     bim_file = Path(str(dataset_file)[:-4] + '.bim')
 
@@ -537,17 +554,19 @@ def _load_label_mapping(label_file: Path, task: str, du) -> dict:
 # COMMON OPTIONS
 @click.option(
     '--seeds',
-    type=int,
     multiple=True,
-    default=(),
-    help='Seeds to use (space-separated list; default: all in model package).'
+    callback=_parse_int_multi,
+    type=str,
+    default=None,
+    help='Seeds to use (repeat flag or comma-separated; default: all in model package).'
 )
 @click.option(
     '--folds',
-    type=int,
     multiple=True,
-    default=(),
-    help='Folds to use (space-separated list; default: all in model package).'
+    callback=_parse_int_multi,
+    type=str,
+    default=None,
+    help='Folds to use (repeat flag or comma-separated; default: all in model package).'
 )
 @click.option(
     '--batch-size',
@@ -585,6 +604,12 @@ def _load_label_mapping(label_file: Path, task: str, du) -> dict:
     help='Force re-download of model preset (only for --model presets).'
 )
 @click.option(
+    '--temp-dir',
+    type=str,
+    default=None,
+    help='Directory for PLINK preprocessing outputs (default: alongside --plink-prefix).'
+)
+@click.option(
     '--skip-preprocess',
     is_flag=True,
     help='Skip PLINK preprocessing (use if plink-prefix already preprocessed with preprocess-plink).'
@@ -603,7 +628,7 @@ def _load_label_mapping(label_file: Path, task: str, du) -> dict:
 def predict(model, plink_prefix, output, test_dataset, train_dataset, config,
             embedding, input_features_stats, model_params, output_dir, output_name,
             which_fold, seeds, folds, batch_size, device, num_workers, force_download,
-            skip_preprocess, task, normalize, save_logits, save_hidden):
+            temp_dir, skip_preprocess, task, normalize, save_logits, save_hidden):
     """
     Run inference on a test dataset using a trained model.
 
@@ -677,6 +702,9 @@ def predict(model, plink_prefix, output, test_dataset, train_dataset, config,
             import torch
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+        # Default temp dir alongside the PLINK prefix when not provided
+        effective_temp_dir = temp_dir or str(Path(plink_prefix).parent)
+
         # Build command for predict_with_plink.py
         cmd = [
             sys.executable,
@@ -686,7 +714,8 @@ def predict(model, plink_prefix, output, test_dataset, train_dataset, config,
             '--output', output,
             '--batch-size', str(batch_size),
             '--device', device,
-            '--num-workers', str(num_workers)
+            '--num-workers', str(num_workers),
+            '--temp-dir', effective_temp_dir
         ]
 
         if seeds:
@@ -1003,6 +1032,79 @@ def generate_embedding(exp_path, dataset, partition, output_name, task, label_fi
     embedding_module.generate_embedding_with_args(args)
 
     click.echo(f"✓ Embeddings generated: {exp_path}/{output_name}")
+
+
+@main.command(name='compute-input-stats')
+@click.option(
+    '--exp-path',
+    type=click.Path(exists=True),
+    required=True,
+    help='Path to directory containing dataset and partitions.'
+)
+@click.option(
+    '--dataset',
+    type=str,
+    default='dataset.hdf5',
+    help='Dataset filename (.hdf5/.h5 or PLINK .bed).'
+)
+@click.option(
+    '--partition',
+    type=str,
+    default='partitioned_idx.npz',
+    help='Partition file (default: partitioned_idx.npz).'
+)
+@click.option(
+    '--output-name',
+    type=str,
+    default='input_features_means.npz',
+    help='Output filename for feature statistics (default: input_features_means.npz).'
+)
+@click.option(
+    '--parallel-loading/--no-parallel-loading',
+    default=False,
+    help='Use parallel loading (HDF5 datasets only).'
+)
+@click.option(
+    '--ncpus',
+    type=int,
+    default=None,
+    help='Number of CPUs for parallel loading (default: all available).'
+)
+def compute_input_stats(exp_path, dataset, partition, output_name, parallel_loading, ncpus):
+    """
+    Compute per-fold input feature statistics for normalization and imputation.
+
+    Works with PLINK or HDF5 datasets and produces the stats file expected by
+    `dietnet train` (--input-features-means).
+    """
+    import sys
+    from Dietnet import compute_input_features_mean as stats_module
+
+    exp_path = Path(exp_path)
+    exp_path.mkdir(parents=True, exist_ok=True)
+    dataset_path = _resolve_path(exp_path, dataset)
+    partition_path = _resolve_path(exp_path, partition)
+
+    if not dataset_path.exists():
+        click.echo(f"ERROR: Dataset not found: {dataset_path}", err=True)
+        sys.exit(1)
+    if not partition_path.exists():
+        click.echo(f"ERROR: Partition file not found: {partition_path}", err=True)
+        sys.exit(1)
+
+    class Args:
+        pass
+
+    args = Args()
+    args.exp_path = str(exp_path)
+    args.dataset = str(dataset_path)
+    args.partition = str(partition_path)
+    args.parallel_loading = parallel_loading
+    args.ncpus = ncpus
+    args.out = output_name
+
+    stats_module.get_preprocessing_params(args)
+    click.echo(f"✓ Input feature stats saved to {exp_path}/{output_name}")
 
 
 @main.command()

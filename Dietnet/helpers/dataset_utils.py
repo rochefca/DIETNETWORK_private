@@ -113,7 +113,8 @@ class PLINKFoldDataset(torch.utils.data.Dataset):
         return samples
 
 
-def load_plink_genotypes(plink_prefix, cache_file=None, use_memmap=True, verbose=True):
+def load_plink_genotypes(plink_prefix, cache_file=None, use_memmap=True,
+                         force_cache_rebuild=False, verbose=True):
     """
     Load genotypes from PLINK files with optional memory mapping for scalability.
 
@@ -144,12 +145,11 @@ def load_plink_genotypes(plink_prefix, cache_file=None, use_memmap=True, verbose
     dataset_size_gb = (n_samples * n_markers * 1) / (1024**3)  # int8 = 1 byte
 
     # Check if cache exists
-    if cache_file and os.path.exists(cache_file):
+    if cache_file and os.path.exists(cache_file) and not force_cache_rebuild:
         # Decide whether to use memory mapping based on dataset size
         if use_memmap and dataset_size_gb > 2.0:  # Use memmap for datasets > 2GB
             if verbose:
-                print(f'Loading cached genotypes from {cache_file} (memory-mapped)')
-                print(f'Dataset size: {dataset_size_gb:.2f}GB - using disk-based access for scalability')
+                print(f'✓ Reusing cached genotypes (memmap): {cache_file}')
             genotypes = np.load(cache_file, mmap_mode='r')  # Read-only memory map
         else:
             if verbose:
@@ -158,11 +158,15 @@ def load_plink_genotypes(plink_prefix, cache_file=None, use_memmap=True, verbose
         if verbose:
             print(f'Loaded cached genotypes: {genotypes.shape}')
         return genotypes, fam_data, bim_data
+    elif cache_file and force_cache_rebuild and os.path.exists(cache_file):
+        if verbose:
+            print(f'Cache exists but force rebuild requested; regenerating: {cache_file}')
+        os.remove(cache_file)
 
     # Load from PLINK files
     if verbose:
-        print(f'Loading {n_markers:,} markers for {n_samples:,} samples...')
-        print(f'Dataset size: {dataset_size_gb:.2f}GB')
+        print(f'Reading {n_markers:,} markers for {n_samples:,} samples into cache (one-time)...')
+        print(f'Dataset size (int8): {dataset_size_gb:.2f}GB')
 
     if cache_file and use_memmap and dataset_size_gb > 2.0:
         # Create memory-mapped file for large datasets
@@ -529,13 +533,15 @@ class InferenceDataset(torch.utils.data.Dataset):
     - Normalization (using model's training stats)
     """
 
-    def __init__(self, plink_prefix, model_package, use_memmap=True, cache_dir=None, verbose=True):
+    def __init__(self, plink_prefix, model_package, use_memmap=True, cache_file=None,
+                 force_cache_rebuild=False, verbose=True):
         """
         Args:
             plink_prefix: Path to PLINK files (without .bed/.bim/.fam extension)
             model_package: ModelPackage instance with model metadata
             use_memmap: Whether to use memory mapping for large datasets
-            cache_dir: Optional directory for caching aligned genotypes
+            cache_file: Optional file path for caching genotypes
+            force_cache_rebuild: If True, rebuild cache even if it exists
         """
         from pathlib import Path
         from Dietnet.helpers.snp_alignment import create_snp_mapping, check_alignment_quality
@@ -550,15 +556,15 @@ class InferenceDataset(torch.utils.data.Dataset):
 
         # Load test genotypes
         if verbose:
-            print("\nLoading test genotypes...")
-        cache_file = None
-        if cache_dir:
-            cache_file = Path(cache_dir) / f"{Path(plink_prefix).name}_genotypes.npy"
+            print("\nCreating/using genotype cache (memmap)...")
+        if cache_file:
+            cache_file = Path(cache_file)
 
         self.genotypes, self.fam_data, self.bim_data = load_plink_genotypes(
             plink_prefix,
             cache_file=cache_file,
             use_memmap=use_memmap,
+            force_cache_rebuild=force_cache_rebuild,
             verbose=verbose
         )
 

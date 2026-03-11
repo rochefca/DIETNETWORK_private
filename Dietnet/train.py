@@ -439,15 +439,15 @@ def train(config, comet_log, comet_project_name, optimization_exp):
         # Update progress bar
         if config['specifics']['task'] == 'classification':
             pbar.set_postfix({
-                'train_loss': f'{epoch_train_result[0]:.3f}',
                 'train_acc': f'{epoch_train_result[1]:.3f}',
-                'valid_loss': f'{epoch_valid_result[0]:.3f}',
-                'valid_acc': f'{epoch_valid_result[1]:.3f}'
+                'valid_acc': f'{epoch_valid_result[1]:.3f}',
+                'train_loss': f'{epoch_train_result[0]:.3f}'
             })
         elif config['specifics']['task'] == 'regression':
             pbar.set_postfix({
-                'train_loss': f'{epoch_train_result[0]:.3f}',
-                'valid_loss': f'{epoch_valid_result[0]:.3f}'
+                'train_mse': f'{epoch_train_result[0]:.3f}',
+                'valid_mse': f'{epoch_valid_result[0]:.3f}',
+                'train_loss': f'{epoch_train_result[0]:.3f}'
             })
 
         # Log to comet-ml
@@ -475,7 +475,17 @@ def train(config, comet_log, comet_project_name, optimization_exp):
             has_early_stoped = True
             break
 
-        # --- Anneal learning rate ---
+            # log best validation results to comet
+            if comet_log:
+                if config['specifics']['task'] == 'classification':
+                    experiment.log_metric("best_valid_loss", best_result[0])
+                    experiment.log_metric("best_valid_acc", best_result[1])
+
+                if config['specifics']['task'] == 'regression':
+                    experiment.log_metric("best_valid_loss", best_result[0])
+            break # exit training loop
+
+        # ---Anneal learning rate---
         for param_group in optimizer.param_groups:
             param_group['lr'] *= config['params']['learning_rate_annealing']
 
@@ -524,11 +534,16 @@ def train(config, comet_log, comet_project_name, optimization_exp):
     if not optimization_exp:
         print('Saving results', flush=True)
         if config['specifics']['task'] == 'classification':
+            # For PLINK, reuse stored label names; for HDF5, read from file
             if '_plink_label_names' in config:
-                label_names = config['_plink_label_names']
+                label_names = np.array(config['_plink_label_names']).astype(np.str_)
             else:
                 with h5py.File(dataset_file, 'r') as f:
-                    label_names = np.array(f['class_label_names']).astype(np.str_)
+                    # Try class_label_names first (new format), fall back to label_names
+                    if 'class_label_names' in f:
+                        label_names = np.array(f['class_label_names']).astype(np.str_)
+                    else:
+                        label_names = np.array(f['label_names']).astype(np.str_)
 
             lu.save_results(config['specifics']['out_dir'],
                     test_samples, test_ys, label_names,

@@ -10,18 +10,36 @@ import torch
 from Dietnet.helpers import dataset_utils as du
 
 
-def compute_stats_with_args(args):
+def _resolve_path(base_dir: str, path: str) -> str:
+    """Return absolute path, respecting already-absolute inputs."""
+    return path if os.path.isabs(path) else os.path.join(base_dir, path)
+
+
+def get_preprocessing_params(args=None):
+    """
+    Compute per-fold feature statistics for normalization.
+
+    Args:
+        args: argparse.Namespace-like object with exp_path, dataset, partition,
+              parallel_loading, ncpus, and out attributes. If None, CLI args
+              are parsed.
+    """
+    if args is None:
+        args = parse_args()
+
     start_time = time.time()
 
     # Load partition indexes
-    folds_indexes = du.load_folds_indexes(
-            os.path.join(args.exp_path, args.partition)
-            )
+    partition_path = _resolve_path(args.exp_path, args.partition)
+    folds_indexes = du.load_folds_indexes(partition_path)
 
     # Detect dataset type
-    if args.dataset.endswith('.hdf5') or args.dataset.endswith('.h5'):
+    dataset_path = _resolve_path(args.exp_path, args.dataset)
+
+    if dataset_path.endswith('.hdf5') or dataset_path.endswith('.h5'):
+        # HDF5 mode
         print('Using HDF5 dataset')
-        data = h5py.File(os.path.join(args.exp_path, args.dataset))
+        data = h5py.File(dataset_path)
 
         means_by_fold = []
         sd_by_fold = []
@@ -41,8 +59,10 @@ def compute_stats_with_args(args):
         from Dietnet.helpers.dataset_utils import load_plink_genotypes
         from tqdm import tqdm
 
-        plink_prefix = os.path.join(args.exp_path, args.dataset).replace('.bed', '')
-        cache_file = PurePath(args.exp_path, args.dataset.replace('.bed', '_genotypes.npy'))
+        plink_prefix = dataset_path.replace('.bed', '')
+        cache_file = PurePath(args.exp_path, PurePath(dataset_path).name.replace('.bed', '_genotypes.npy'))
+
+        # Load all genotypes
         genotypes, fam_data, bim_data = load_plink_genotypes(plink_prefix, cache_file)
 
         means_by_fold = []
@@ -54,7 +74,7 @@ def compute_stats_with_args(args):
             means_by_fold.append(mean.numpy())
             sd_by_fold.append(sd.numpy())
 
-    out_path = os.path.join(args.exp_path, args.out)
+    out_path = _resolve_path(args.exp_path, args.out)
     print('Saving input features stats to', out_path)
     np.savez(out_path, means_by_fold=means_by_fold, sd_by_fold=sd_by_fold)
     print('Execution time: {} seconds'.format(time.time() - start_time))
@@ -76,10 +96,6 @@ def parse_args():
                         help='Output filename (default: %(default)s).')
 
     return parser.parse_args()
-
-
-def get_preprocessing_params():
-    compute_stats_with_args(parse_args())
 
 
 if __name__ == '__main__':

@@ -17,7 +17,7 @@ cd DIETNETWORK
 # Create virtual environment and install package
 uv venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-uv pip install -e .
+bash setup.sh # installs virtual environment dependencies and external dependencies
 
 # Verify installation
 dietnet info
@@ -47,47 +47,28 @@ uv pip install -e ".[tracking]"
 uv pip install -e ".[dev]"
 ```
 
-## Quick Start - Smoke Test
+## Quick Start - Smoke Tests
 
-Validate your installation with the 1000 Genomes smoke test:
+Run the bundled smoke tests to verify the code works:
 
-```bash
-# Run smoke test (downloads model and data automatically)
-bash tests/run_smoke_test.sh
-```
+- **Run immediately after cloning** (everything downloads on first run):  
+  ```bash
+  
+  # Downloads data and model and performs inference on data using a single model
+  bash tests/kgp_precomputed/run_smoke_test_single.sh
 
-Expected output:
-```
-Accuracy: 94.75%
-Expected: 85-100%
-✓ PASSED
-```
+  # Performs inference using ensemble model
+  bash tests/kgp_precomputed/run_smoke_test.sh
 
-This test:
-- Downloads a pretrained 1KGP model (~57 MB)
-- Downloads 1KGP test data (~1-2 GB)
-- Runs inference and validates accuracy
-- Caches everything for future runs
+  # Train + predict on the small bundled 1KGP subset (much slower, GPU is recommended)
+  bash tests/kgp_precomputed/run_train_smoke.sh
 
-## Using Model Presets
+  ```
+  These commands stay within `tests/kgp_precomputed/` and manage their own cached data/model downloads.
 
-Run inference with pretrained models:
 
-```bash
-# Using a preset model (downloads automatically)
-dietnet predict --model 1kgp_default \
-                --plink-prefix /path/to/your/data \
-                --output predictions.tsv
+All smoke tests download required assets on first run, then reuse cached data/models.
 
-# Using a local model package
-dietnet predict --model ./pretrained_1000g \
-                --plink-prefix /path/to/your/data \
-                --output predictions.tsv
-```
-
-**Available presets:**
-- `1kgp_default`: 1000 Genomes Phase 3 (24 populations, single model)
-- `hgdp_ukbb`: HGDP+1KGP for UKBB inference (coming soon)
 
 ## Train on PLINK Data (recommended)
 
@@ -96,111 +77,81 @@ Train directly from PLINK files and produce packaged models (`seed_X/fold_Y` wit
 ```bash
 # 1) Partition your PLINK dataset (optionally stratify by population)
 dietnet partition \
-    --exp-path ./data \
-    --dataset train.bed \
+    --exp-path /path/to/experiment_dir \
+    --dataset /path/to/train_prefix.bed \
     --nb-folds 5 \
     --stratify \
-    --label-file labels.tsv   # required for stratified PLINK
+    --label-file /path/to/labels.tsv   # required for stratified PLINK
 
 # 2) Compute embeddings per fold
 dietnet generate-embedding \
-    --exp-path ./data \
-    --dataset train.bed \
-    --label-file labels.tsv \
+    --exp-path /path/to/experiment_dir \
+    --dataset /path/to/train_prefix.bed \
+    --label-file /path/to/labels.tsv \
     --output-name embedding.npz
 
-# 3) Compute input stats (means/stds) per fold
-python Dietnet/compute_input_features_mean.py \
-    --exp-path ./data \
-    --dataset train.bed \
+# 3) Compute input stats (means/stds) per fold via CLI
+dietnet compute-input-stats \
+    --exp-path /path/to/experiment_dir \
+    --dataset /path/to/train_prefix.bed \
     --partition partitioned_idx.npz \
-    --out input_features_means.npz
+    --output-name input_features_means.npz
 
-# 4) Train and package a single model (default seed, all folds)
+# 4) Train and package a single model (one fold)
 dietnet train \
-    --exp-path ./data \
+    --exp-path /path/to/experiment_dir \
     --exp-name my_experiment \
     --config config.yaml \
-    --plink-prefix ./data/train \
-    --label-file labels.tsv \
+    --plink-prefix /path/to/train_prefix \
+    --label-file /path/to/labels.tsv \
     --folds 0   # pick one fold if you only want a single model
 
 # 5) Train an ensemble across seeds/folds
 dietnet train \
-    --exp-path ./data \
+    --exp-path /path/to/experiment_dir \
     --exp-name my_experiment \
     --config config.yaml \
-    --plink-prefix ./data/train \
-    --label-file labels.tsv \
-    --seeds 42 43 44 \
-    --folds 0 1 2 3 4 \
-    --output-dir ./my_packages   # optional override
+    --plink-prefix /path/to/train_prefix \
+    --label-file /path/to/labels.tsv \
+    --seeds 42,43,44 \
+    --folds 0,1,2,3,4 \
+    --output-dir /path/to/my_packages   # optional override
 ```
 
 Packages land in `<exp-path>/<exp-name>_packages/seed_*/fold_*/` by default and are ready for `dietnet predict`.
-`--seeds` and `--folds` accept space-separated lists in a single flag (e.g., `--seeds 42 43 44`).
+`--seeds` and `--folds` are Click “multiple” options: repeat the flag (`--seeds 42 --seeds 43`) or provide comma-separated values in one flag (`--seeds 42,43`). The same applies to `--folds`.
 
-## Inference (presets or your own packages)
+## Using Pre-trained Model
 
-### Preset models (downloaded automatically)
+### Preset models
+
+Specify an existing model to use (will download automatically if not present in `~/.cache/dietnet/`).
+
 ```bash
+# Using a preset model (downloads automatically)
 dietnet predict --model 1kgp_default \
                 --plink-prefix /path/to/test_data \
-                --output predictions.tsv
+                --output predictions.tsv \
+                --temp-dir /path/to/test_data
 ```
+`--temp-dir` controls where preprocessed PLINK files **and** the genotype cache are written (default: alongside `--plink-prefix`, e.g., `/path/to/test_data`).
+
+**Available presets:**
+- `1kgp_default`: 1000 Genomes Phase 3 (24 populations, single model)
+- `hgdp_ukbb`: HGDP+1KGP for UKBB inference (coming soon)
 
 ### Your own packaged models
 Point `--model` to the directory that contains `seed_*` folders (the parent of the packages):
-```bash
-dietnet predict --model ./my_packages \
-                --plink-prefix /path/to/test_data \
-                --output predictions.tsv
 
-# Use a subset of seeds/folds from your ensemble
-dietnet predict --model ./my_packages \
+```bash
+# Using a local model package
+dietnet predict --model /path/to/pretrained/model \
                 --plink-prefix /path/to/test_data \
                 --output predictions.tsv \
-                --seeds 42 43 --folds 0 1
+                --temp-dir /path/to/test_data
 ```
 
-## Training from Scratch (legacy HDF5 path)
-
-### Complete workflow
-
-```bash
-# 1. Create dataset from genotype and label files
-dietnet create-dataset \
-    --genotypes data/snps.txt \
-    --labels data/labels.txt \
-    --output-dir ./processed
-
-# 2. Partition into cross-validation folds
-dietnet partition \
-    --exp-path ./processed \
-    --nb-folds 5
-
-# 3. Generate genotype frequency embeddings
-dietnet generate-embedding \
-    --exp-path ./processed
-
-# 4. Train model on a specific fold
-dietnet train \
-    --exp-path ./processed \
-    --exp-name experiment1 \
-    --which-fold 0 \
-    --config config.yaml
-
-# 5. Run predictions on external data
-dietnet predict \
-    --test-dataset test.hdf5 \
-    --train-dataset ./processed/dataset.hdf5 \
-    --config ./processed/experiment1/config.yaml \
-    --embedding ./processed/embedding.npz \
-    --input-features-stats ./processed/input_features_means.npz \
-    --model-params ./processed/experiment1/best_model.pt \
-    --output-dir ./results \
-    --which-fold 0
-```
+As with training, adding `--seeds` and `--folds` specifies which models to train on.
 
 ### Get help
 
@@ -211,4 +162,24 @@ dietnet --help
 # Command-specific help
 dietnet train --help
 dietnet predict --help
+```
+
+## FAQ
+
+### How do I run this on my data?
+
+We provided 2 scripts that you can use as a template for your research:
+- `scripts/predict_external.sh` for inference on your dataset
+- `scripts/train_predict.sh` to train on a reference dataset and do inference on another
+
+### I can't download the data or model since my compute node has no access to the internet
+
+You can run this prior to running the smoke tests:
+```bash
+bash tests/kgp_precomputed/download_test_data.sh
+```
+
+Likewise the models can be downloaded using the following:
+```bash
+bash tests/kgp_precomputed/download_model.sh
 ```

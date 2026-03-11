@@ -111,6 +111,17 @@ class ModelPackage:
         """Get fold from metadata"""
         return self.metadata.get('fold') if self.metadata else None
 
+    @property
+    def package_root(self) -> Path:
+        """
+        Root directory that contains seed_* folders.
+        Falls back to the package's parent if structure is non-standard.
+        """
+        parent = self.package_dir.parent
+        if parent.name.startswith('seed_') and parent.parent.exists():
+            return parent.parent
+        return parent
+
     def load_model_state(self, device: str = 'cpu') -> Dict:
         """
         Load PyTorch model state dict (device agnostic).
