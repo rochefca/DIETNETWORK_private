@@ -22,7 +22,7 @@ PARTITION_FILE="$EXP_PATH/partitioned_idx.npz"
 EMBED_FILE="$EXP_PATH/embedding.npz"
 INPUT_STATS_FILE="$EXP_PATH/input_features_means.npz"
 PACKAGE_DIR="$EXP_PATH/${EXP_NAME}_packages"
-PREPROCESSED_DIR="$EXP_PATH/preprocessed_plink"
+PREPROCESSED_DIR="$EXP_PATH/outputs"
 
 SEED=78
 FOLD=0
@@ -48,11 +48,11 @@ dietnet generate-embedding \
   --output-name "$(basename "$EMBED_FILE")"
 
 echo "[3/6] Input stats..."
-python3 "$PROJECT_ROOT/Dietnet/compute_input_features_mean.py" \
+dietnet compute-input-stats \
   --exp-path "$EXP_PATH" \
   --dataset "${PLINK_PREFIX}.bed" \
   --partition "$(basename "$PARTITION_FILE")" \
-  --out "$(basename "$INPUT_STATS_FILE")"
+  --output-name "$(basename "$INPUT_STATS_FILE")"
 
 echo "[4/6] Training (seed ${SEED}, fold ${FOLD})..."
 dietnet train \
@@ -77,4 +77,11 @@ dietnet predict \
   --folds "$FOLD" \
   --temp-dir "$PREPROCESSED_DIR"
 
-echo "[6/6] Done. Check outputs in $EXP_PATH"
+echo "[6/6] Checking test-fold accuracy (seed ${SEED}, fold ${FOLD})..."
+dietnet check \
+  --predictions "$EXP_PATH/train_smoke_predictions.tsv" \
+  --labels "$LABELS" \
+  --partition-file "$PARTITION_FILE" \
+  --fold "$FOLD"
+
+echo "Done. Check outputs in $EXP_PATH"
