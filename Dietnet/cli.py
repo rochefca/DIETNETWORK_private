@@ -1109,55 +1109,6 @@ def compute_input_stats(exp_path, dataset, partition, output_name, parallel_load
 
 @main.command()
 @click.option(
-    '--exp-path',
-    type=click.Path(exists=True),
-    required=True,
-    help='Path to directory containing dataset and partitions.'
-)
-@click.option(
-    '--dataset',
-    type=str,
-    default='dataset.hdf5',
-    help='Dataset filename (default: dataset.hdf5).'
-)
-@click.option(
-    '--partition',
-    type=str,
-    default='partitioned_idx.npz',
-    help='Partition file (default: partitioned_idx.npz).'
-)
-@click.option(
-    '--output-name',
-    type=str,
-    default='input_features_means.npz',
-    help='Output filename (default: input_features_means.npz).'
-)
-def compute_stats(exp_path, dataset, partition, output_name):
-    """
-    Compute per-fold input feature means and standard deviations.
-
-    Used for missing value imputation and input normalization during training.
-
-    Example:
-        dietnet compute-stats --exp-path ./processed
-    """
-    class Args:
-        pass
-
-    args = Args()
-    args.exp_path = exp_path
-    args.dataset = dataset
-    args.partition = partition
-    args.out = output_name
-
-    from Dietnet import compute_input_features_mean as stats_module
-    stats_module.compute_stats_with_args(args)
-
-    click.echo(f"✓ Input stats saved: {exp_path}/{output_name}")
-
-
-@main.command()
-@click.option(
     '--model',
     type=str,
     required=True,
