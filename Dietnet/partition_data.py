@@ -24,6 +24,7 @@ def partition_data_with_args(args):
         # HDF5 mode
         with h5py.File(dataset_file, 'r') as f:
             nb_samples = len(f['samples'])
+            sample_ids = np.array(f['samples']).astype(str)
             if args.stratify:
                 if 'class_labels' in f:
                     labels = np.array(f['class_labels'])
@@ -37,13 +38,14 @@ def partition_data_with_args(args):
         plink_prefix = dataset_file.replace('.bed', '')
         plink_reader = PyPlink(plink_prefix)
         nb_samples = plink_reader.get_nb_samples()
+        fam_data = plink_reader.get_fam()
+        fam_samples = fam_data['iid'].values
+        sample_ids = fam_samples
         if args.stratify:
             if args.label_file is None:
                 raise ValueError("--label-file is required for stratified PLINK partitioning.")
             label_path = os.path.join(args.exp_path, args.label_file)
             label_samples, label_values = du.load_labels(label_path)
-            fam_data = plink_reader.get_fam()
-            fam_samples = fam_data['iid'].values
             labels = du.order_labels(fam_samples, label_samples, label_values)
 
     indices = np.arange(nb_samples)
@@ -58,7 +60,8 @@ def partition_data_with_args(args):
     print('Saving partition to', os.path.join(args.exp_path,args.out))
     np.savez(os.path.join(args.exp_path,args.out),
              folds_indexes=np.array(partition,dtype=object),
-             seed=np.array([args.seed]))
+             seed=np.array([args.seed]),
+             sample_ids=sample_ids)
 
 
 def parse_args():

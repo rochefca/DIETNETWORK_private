@@ -5,9 +5,11 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
+#SBATCH --mem=32GB
+#SBATCH --account=ctb-hussinju
 #SBATCH --time=24:00:00
 
-# Purpose: train a DietNetwork ensemble on a PLINK dataset and verify hold-out accuracy.
+# Purpose: train a DietNetwork ensemble on a PLINK dataset and run inference on another PLINK dataset.
 # Usage: edit the absolute paths below, then sbatch this script.
 
 set -euo pipefail
@@ -17,21 +19,27 @@ set -euo pipefail
 ############################################
 
 # Training data (PLINK prefix without extension)
-TRAIN_PLINK_PREFIX="/abs/path/to/train"
+TRAIN_PLINK_PREFIX="/lustre06/project/6065672/sciclun4/ActiveProjects/DIETNETWORK/tests/data/ukbb_test_data/hgdp_1kgp"
 
 # Label TSV (sample_id<TAB>label) for training/partition stratification
-LABEL_TSV="/abs/path/to/labels.tsv"
+LABEL_TSV="/lustre06/project/6065672/sciclun4/ActiveProjects/DIETNETWORK/tests/data/ukbb_test_data/hgdp_1kgp_labels.tsv"
 
 # Where to write intermediate artifacts (partitions, embeddings, stats, packages)
-EXP_PATH="/abs/path/to/experiment_dir"
-EXP_NAME="my_experiment"
+EXP_PATH="/lustre06/project/6065672/sciclun4/ActiveProjects/DIETNETWORK/tests/data/ukbb_test_data/outputs"
+EXP_NAME="EXP1"
 
 # Config YAML used for training
-CONFIG="/abs/path/to/config.yaml"
+CONFIG="/lustre06/project/6065672/sciclun4/ActiveProjects/DIETNETWORK/tests/data/ukbb_test_data/config.yaml"
 
 # Ensemble seeds/folds
 SEEDS=(42 43 44)
 FOLDS=(0 1 2 3 4)
+
+# Test data (PLINK prefix) for external inference (e.g. UKBB)
+TEST_PLINK_PREFIX="/lustre06/project/6065672/sciclun4/ActiveProjects/DIETNETWORK/tests/data/ukbb_test_data/ukbb"
+
+# Prediction output file for external data
+PREDICTIONS_OUT="/lustre06/project/6065672/sciclun4/ActiveProjects/DIETNETWORK/tests/data/ukbb_test_data/outputs/predictions.tsv"
 
 ############################################
 # Derived paths (no edits usually needed)
@@ -49,7 +57,7 @@ FOLD_FLAGS=(); for f in "${FOLDS[@]}"; do FOLD_FLAGS+=(--folds "$f"); done
 mkdir -p "${EXP_PATH}" logs
 source "$(dirname "$(dirname "$(realpath "$0")")")/.venv/bin/activate"
 
-echo "[1/5] Partitioning (stratified)..."
+echo "[1/7] Partitioning (stratified)..."
 dietnet partition \
   --exp-path "${EXP_PATH}" \
   --dataset "${TRAIN_DATASET_BED}" \
@@ -58,7 +66,7 @@ dietnet partition \
   --stratify \
   --output-name "$(basename "${PARTITION_FILE}")"
 
-echo "[2/5] Computing embeddings..."
+echo "[2/7] Computing embeddings..."
 dietnet generate-embedding \
   --exp-path "${EXP_PATH}" \
   --dataset "${TRAIN_DATASET_BED}" \
@@ -66,14 +74,14 @@ dietnet generate-embedding \
   --label-file "${LABEL_TSV}" \
   --output-name "$(basename "${EMBED_FILE}")"
 
-echo "[3/5] Computing input stats..."
+echo "[3/7] Computing input stats..."
 dietnet compute-stats \
   --exp-path "${EXP_PATH}" \
   --dataset "${TRAIN_DATASET_BED}" \
   --partition "$(basename "${PARTITION_FILE}")" \
   --output-name "$(basename "${INPUT_STATS_FILE}")"
 
-echo "[4/5] Training ensemble and packaging..."
+echo "[4/7] Training ensemble and packaging..."
 dietnet train \
   --exp-path "${EXP_PATH}" \
   --exp-name "${EXP_NAME}" \
@@ -87,7 +95,7 @@ dietnet train \
   "${FOLD_FLAGS[@]}" \
   --output-dir "${PACKAGE_DIR}"
 
-echo "[5/5] Checking hold-out test accuracy per fold..."
+echo "[5/7] Checking hold-out test accuracy per fold..."
 for s in "${SEEDS[@]}"; do
   for f in "${FOLDS[@]}"; do
     PRED="${EXP_PATH}/${EXP_NAME}/${EXP_NAME}_seed${s}_fold${f}/predictions.tsv"
@@ -96,5 +104,20 @@ for s in "${SEEDS[@]}"; do
   done
 done
 
+echo "[6/7] Running inference on external dataset..."
+dietnet predict \
+  --model "${PACKAGE_DIR}" \
+  --plink-prefix "${TEST_PLINK_PREFIX}" \
+  --output "${PREDICTIONS_OUT}" \
+  "${SEED_FLAGS[@]}" \
+  "${FOLD_FLAGS[@]}"
+
+# echo "[7/7] Checking external dataset accuracy (fill in UKBB_LABEL_TSV if available)..."
+# UKBB_LABEL_TSV="/abs/path/to/ukbb_labels.tsv"
+# dietnet check \
+#   --predictions "${PREDICTIONS_OUT}" \
+#   --labels "${UKBB_LABEL_TSV}"
+
+echo "[7/7] Done. External predictions saved to ${PREDICTIONS_OUT}"
 echo ""
 echo "Results written to: ${EXP_PATH}"
