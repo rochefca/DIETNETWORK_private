@@ -1313,6 +1313,14 @@ def check(predictions, labels, min_accuracy, max_accuracy, partition_file, fold)
                 err=True
             )
             sys.exit(1)
+        # Validate requested fold index against available folds
+        num_folds = len(partition_data['folds_indexes'])
+        if fold < 0 or fold >= num_folds:
+            raise click.BadParameter(
+                f"Fold index {fold} is out of range for partition file; "
+                f"valid fold indices are 0 to {num_folds - 1}.",
+                param_hint="fold",
+            )
         all_sample_ids = partition_data['sample_ids'].astype(str)
         test_indices = partition_data['folds_indexes'][fold][2]
         test_sample_ids = set(all_sample_ids[test_indices])
