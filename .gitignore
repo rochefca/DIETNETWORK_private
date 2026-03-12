@@ -28,6 +28,9 @@ tests/.ipynb_checkpoints/
 # Distribution packages
 *.tar.gz
 
+# Site-specific scripts (not tracked)
+untracked_scripts/
+
 # Deprecated files
 deprecated/
 bin/
